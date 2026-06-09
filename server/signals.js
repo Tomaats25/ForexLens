@@ -1,54 +1,17 @@
-// Set & Forget multi-timeframe strategy — with relaxed MTF rules + WATCH override.
+// ForexLens scoring — relaxed MTF + score floors.
 //
-// Trend strength:
-//   STRONG  — weekly AND daily structures both clear AND matching → full score
-//   WEAK    — only one of weekly/daily is clear, the other is UNCLEAR → half score
-//   CONFLICT— weekly and daily oppose each other → no directional signal (still WATCH)
-//   NONE    — both UNCLEAR → no directional signal (still WATCH)
-//
-// WATCH override: any zone with 6+ touches within 0.5% of price always shows,
-//                 even if trend doesn't qualify for BUY/SELL.
+// Trend detection: avg of last 2 closes vs avg of prior 2 closes on each timeframe.
+// Alignment: STRONG (W==D), WEAK (one unclear), MIXED (W vs D opposite), NONE (both no data).
+// Score floors: strong zones near price always reach a SIGNAL band even without triggers.
+// Bands: 80+ elite (1:4) · 60-79 strong (1:3) · 40-59 signal (1:2) · 25-39 watch · <25 no setup.
 
-function isStrictlyAscending(arr) {
-  for (let i = 1; i < arr.length; i++) {
-    if (arr[i] <= arr[i - 1]) return false;
-  }
-  return true;
+function pipSize(pair) {
+  return pair.includes('JPY') ? 0.01 : 0.0001;
 }
 
-function isStrictlyDescending(arr) {
-  for (let i = 1; i < arr.length; i++) {
-    if (arr[i] >= arr[i - 1]) return false;
-  }
-  return true;
-}
-
-function findSwings(candles, lookback) {
-  const highs = [];
-  const lows = [];
-  for (let i = lookback; i < candles.length - lookback; i++) {
-    const c = candles[i];
-    let isHigh = true;
-    let isLow = true;
-    for (let j = 1; j <= lookback; j++) {
-      if (candles[i - j].high >= c.high || candles[i + j].high >= c.high) isHigh = false;
-      if (candles[i - j].low <= c.low || candles[i + j].low <= c.low) isLow = false;
-    }
-    if (isHigh) highs.push({ price: c.high, time: c.time });
-    if (isLow) lows.push({ price: c.low, time: c.time });
-  }
-  return { highs, lows };
-}
-
-function getStructure(candles, lookback = 2) {
-  if (!candles || candles.length < 10) return 'UNCLEAR';
-  const swings = findSwings(candles, lookback);
-  const lastHighs = swings.highs.slice(-3).map((h) => h.price);
-  const lastLows = swings.lows.slice(-3).map((l) => l.price);
-  if (lastHighs.length < 2 || lastLows.length < 2) return 'UNCLEAR';
-  if (isStrictlyAscending(lastHighs) && isStrictlyAscending(lastLows)) return 'BULLISH';
-  if (isStrictlyDescending(lastHighs) && isStrictlyDescending(lastLows)) return 'BEARISH';
-  return 'UNCLEAR';
+function round(num, pair) {
+  const decimals = pair.includes('JPY') ? 3 : 5;
+  return Number(num.toFixed(decimals));
 }
 
 function atr(candles, period = 14) {
@@ -64,13 +27,29 @@ function atr(candles, period = 14) {
   return trs.slice(-period).reduce((a, b) => a + b, 0) / period;
 }
 
-function pipSize(pair) {
-  return pair.includes('JPY') ? 0.01 : 0.0001;
+// SIMPLE structure detection: average of last 2 closes vs average of prior 2 closes.
+// Only returns UNCLEAR when fewer than 5 candles are available.
+function getStructure(candles) {
+  if (!candles || candles.length < 5) return 'UNCLEAR';
+  const window = candles.slice(-10);
+  const closes = window.map((c) => c.close);
+  const n = closes.length;
+  if (n < 4) return 'UNCLEAR';
+  const last2 = (closes[n - 1] + closes[n - 2]) / 2;
+  const prior2 = (closes[n - 3] + closes[n - 4]) / 2;
+  if (last2 > prior2) return 'BULLISH';
+  if (last2 < prior2) return 'BEARISH';
+  return 'UNCLEAR';
 }
 
-function round(num, pair) {
-  const decimals = pair.includes('JPY') ? 3 : 5;
-  return Number(num.toFixed(decimals));
+function computeAlignment(weeklyStructure, dailyStructure) {
+  const w = weeklyStructure;
+  const d = dailyStructure;
+  if (w === 'UNCLEAR' && d === 'UNCLEAR') return { strength: 'NONE', direction: null };
+  if (w === 'UNCLEAR') return { strength: 'WEAK', direction: d };
+  if (d === 'UNCLEAR') return { strength: 'WEAK', direction: w };
+  if (w === d) return { strength: 'STRONG', direction: w };
+  return { strength: 'MIXED', direction: null };
 }
 
 function zoneDistance(price, zone) {
@@ -237,246 +216,88 @@ function triggerLabel(breakRetest, rejection) {
   return null;
 }
 
-function computeAlignment(weekly, daily) {
-  const w = weekly;
-  const d = daily;
-  if (w !== 'UNCLEAR' && d !== 'UNCLEAR' && w === d) return 'STRONG';
-  if (w !== 'UNCLEAR' && d === 'UNCLEAR') return 'WEAK';
-  if (w === 'UNCLEAR' && d !== 'UNCLEAR') return 'WEAK';
-  if (w !== 'UNCLEAR' && d !== 'UNCLEAR' && w !== d) return 'CONFLICT';
-  return 'NONE';
+// Score floors: strong zones near price always reach actionable, regardless of triggers/trend.
+function applyScoreFloors(score, zone, distance) {
+  let floor = 0;
+  if (zone.touches >= 3 && distance <= 0.001) floor = Math.max(floor, 40);
+  if (zone.touches >= 5 && distance <= 0.002) floor = Math.max(floor, 45);
+  if (zone.touches >= 8 && distance <= 0.005) floor = Math.max(floor, 55);
+  return Math.max(score, floor);
 }
 
-const MAX_SIGNAL_DIST = 0.003; // 0.3%
-const WATCH_DIST = 0.005; // 0.5%
-const WATCH_MIN_TOUCHES = 6;
+const MAX_ZONE_DIST = 0.005; // 0.5% — relaxed from prior 0.3%
 const PSYCH_TOLERANCE = 0.0015;
-const SCORE_THRESHOLD = 20;
 
-function buildBaseInfo(pair, weekly, daily, h4, sr, weeklyStructure, dailyStructure, h4Structure, alignmentStrength) {
+function determineReason(score, hasZone, hasBR, hasRejection, alignmentStrength) {
+  if (!hasZone) return 'no_zone';
+  if (score >= 80) return 'elite';
+  if (score >= 60) return 'strong';
+  if (score >= 40) return 'signal';
+  if (score >= 25) return 'watch';
+  if (!hasBR && !hasRejection) return 'no_trigger';
+  if (alignmentStrength === 'MIXED') return 'mixed_trend';
+  if (alignmentStrength === 'WEAK') return 'weak_trend';
+  if (alignmentStrength === 'NONE') return 'no_trend';
+  return 'low_score';
+}
+
+function buildBaseInfo(pair, daily, sr, weeklyStructure, dailyStructure, h4Structure, alignment) {
   const currentPrice = daily[daily.length - 1].close;
   const sNear = nearestZone(currentPrice, sr.support);
   const rNear = nearestZone(currentPrice, sr.resistance);
   return {
     currentPrice: round(currentPrice, pair),
-    trend: alignmentStrength === 'STRONG' ? weeklyStructure : weeklyStructure !== 'UNCLEAR' ? weeklyStructure : dailyStructure,
+    trend: alignment.direction || 'MIXED',
     atr: round(atr(daily, 14), pair),
     mtfAlignment: {
       weekly: weeklyStructure,
       daily: dailyStructure,
       h4: h4Structure,
-      strength: alignmentStrength,
+      strength: alignment.strength,
       allAligned:
-        alignmentStrength === 'STRONG' &&
-        h4Structure === weeklyStructure
+        alignment.strength === 'STRONG' && h4Structure === weeklyStructure
     },
     nearestSupport: sNear ? describeZone(sNear.zone, sNear.distance, pair) : null,
     nearestResistance: rNear ? describeZone(rNear.zone, rNear.distance, pair) : null
   };
 }
 
-function findWatchZone(currentPrice, allZones) {
-  let watchZone = null;
-  let watchDist = Infinity;
-  for (const z of allZones) {
-    if (z.touches < WATCH_MIN_TOUCHES) continue;
-    const d = zoneDistance(currentPrice, z);
-    if (d > WATCH_DIST) continue;
-    if (d < watchDist) {
-      watchDist = d;
-      watchZone = z;
-    }
-  }
-  return watchZone ? { zone: watchZone, distance: watchDist } : null;
-}
-
-function buildWatch(baseInfo, zone, distance, pair, reason) {
-  const psych = checkPsychConfluence(zone.mid, pair, PSYCH_TOLERANCE);
-  let score = 0;
-  score += Math.min(zone.touches * 8, 60);
-  if (distance <= 0.001) score += 20;
-  else if (distance <= 0.003) score += 10;
-  else if (distance <= 0.005) score += 5;
-  if (psych.confluent) score += 20;
-  score = Math.min(100, Math.round(score));
-
-  return {
-    ...baseInfo,
-    direction: 'WATCH',
-    score,
-    actionable: false,
-    entry: round(zone.mid, pair),
-    sl: null,
-    tp: null,
-    rr: null,
-    slPips: null,
-    tpPips: null,
-    zone: {
-      low: round(zone.low, pair),
-      high: round(zone.high, pair),
-      mid: round(zone.mid, pair),
-      touches: zone.touches
-    },
-    trigger: null,
-    psychLevel: psych.confluent ? round(psych.level, pair) : null,
-    psychConfluence: psych.confluent,
-    tpCappedBy: null,
-    watchDistance: Number((distance * 100).toFixed(2)),
-    reason
-  };
-}
-
-function buildNonActionable(baseInfo, direction, score, zone, trigger, psych, pair, reason) {
-  return {
-    ...baseInfo,
-    direction,
-    score: Math.round(score),
-    actionable: false,
-    entry: null,
-    sl: null,
-    tp: null,
-    rr: null,
-    slPips: null,
-    tpPips: null,
-    zone: zone
-      ? {
-          low: round(zone.low, pair),
-          high: round(zone.high, pair),
-          mid: round(zone.mid, pair),
-          touches: zone.touches
-        }
-      : null,
-    trigger,
-    psychLevel: psych?.confluent ? round(psych.level, pair) : null,
-    psychConfluence: !!psych?.confluent,
-    tpCappedBy: null,
-    reason
-  };
+function logSummary(pair, weeklyStructure, dailyStructure, h4Structure, score, reason) {
+  console.log(
+    `${pair}: weekly=${weeklyStructure.toLowerCase()} daily=${dailyStructure.toLowerCase()} 4H=${h4Structure.toLowerCase()} score=${score} reason=${reason}`
+  );
 }
 
 export function computeSignal(pair, weekly, daily, h4, sr) {
-  console.log(`[${pair}] === scan ===`);
-
   if (!weekly?.length || !daily?.length) {
-    console.log(`[${pair}] no data (weekly=${weekly?.length || 0} daily=${daily?.length || 0})`);
-    return null;
-  }
-  if (weekly.length < 10) {
-    console.log(`[${pair}] insufficient weekly data (${weekly.length} candles)`);
+    console.log(`${pair}: weekly=no_data daily=no_data 4H=no_data score=0 reason=no_data`);
     return null;
   }
 
-  console.log(
-    `[${pair}] weekly closes (last 5): ${weekly
-      .slice(-5)
-      .map((c) => round(c.close, pair))
-      .join(', ')}`
-  );
-  console.log(
-    `[${pair}] daily closes (last 5): ${daily
-      .slice(-5)
-      .map((c) => round(c.close, pair))
-      .join(', ')}`
-  );
+  const weeklyStructure = getStructure(weekly);
+  const dailyStructure = getStructure(daily);
+  const h4Structure = h4?.length ? getStructure(h4) : 'UNCLEAR';
 
-  const weeklyStructure = getStructure(weekly, 2);
-  const dailyStructure = getStructure(daily, 3);
-  const h4Structure = h4?.length ? getStructure(h4, 3) : 'NO_DATA';
-
-  // Show the swings the structure detector saw, so we can see WHY it picked the label.
-  const wSwings = findSwings(weekly, 2);
-  const dSwings = findSwings(daily, 3);
-  console.log(
-    `[${pair}] weekly swings (last 3 highs/lows): H=${wSwings.highs
-      .slice(-3)
-      .map((s) => round(s.price, pair))
-      .join('→')} L=${wSwings.lows
-      .slice(-3)
-      .map((s) => round(s.price, pair))
-      .join('→')}`
-  );
-  console.log(
-    `[${pair}] daily swings (last 3 highs/lows):  H=${dSwings.highs
-      .slice(-3)
-      .map((s) => round(s.price, pair))
-      .join('→')} L=${dSwings.lows
-      .slice(-3)
-      .map((s) => round(s.price, pair))
-      .join('→')}`
-  );
-
-  console.log(
-    `[${pair}] structures: W=${weeklyStructure} D=${dailyStructure} 4H=${h4Structure}`
-  );
-
-  const alignmentStrength = computeAlignment(weeklyStructure, dailyStructure);
-  console.log(`[${pair}] alignment: ${alignmentStrength}`);
-
+  const alignment = computeAlignment(weeklyStructure, dailyStructure);
   const baseInfo = buildBaseInfo(
     pair,
-    weekly,
     daily,
-    h4,
     sr,
     weeklyStructure,
     dailyStructure,
     h4Structure,
-    alignmentStrength
+    alignment
   );
 
   const currentPrice = daily[daily.length - 1].close;
-  console.log(`[${pair}] current price: ${round(currentPrice, pair)}`);
 
-  // Pre-scan for a WATCH-eligible zone (used as fallback at every failure point).
-  const allZones = [...sr.support, ...sr.resistance];
-  const watch = findWatchZone(currentPrice, allZones);
-  if (watch) {
-    console.log(
-      `[${pair}] WATCH-eligible zone: ${round(watch.zone.mid, pair)} (${watch.zone.touches}x, ${(
-        watch.distance * 100
-      ).toFixed(2)}% away)`
-    );
-  } else {
-    console.log(`[${pair}] no WATCH-eligible zone (need ${WATCH_MIN_TOUCHES}+ touches within ${WATCH_DIST * 100}%)`);
-  }
-
-  // Decide direction from alignment
-  let direction = null;
-  if (alignmentStrength === 'STRONG' || alignmentStrength === 'WEAK') {
-    const trendBullish =
-      weeklyStructure === 'BULLISH' || (weeklyStructure === 'UNCLEAR' && dailyStructure === 'BULLISH');
-    direction = trendBullish ? 'BUY' : 'SELL';
-  }
-
-  if (!direction) {
-    if (watch) {
-      console.log(`[${pair}] RESULT: WATCH (no trend direction, alignment=${alignmentStrength})`);
-      return buildWatch(baseInfo, watch.zone, watch.distance, pair, `Trend ${alignmentStrength}`);
-    }
-    console.log(`[${pair}] RESULT: NO SETUP (alignment=${alignmentStrength}, no watch zone)`);
-    return buildNonActionable(
-      baseInfo,
-      'NONE',
-      0,
-      null,
-      null,
-      null,
-      pair,
-      `Trend ${alignmentStrength}`
-    );
-  }
-
-  // Find a qualifying directional zone (3+ touches, within 0.3%, correctly positioned).
-  const qualifying = allZones.filter((z) => z.touches >= 3);
-  console.log(`[${pair}] qualifying levels (3+ touches): ${qualifying.length}`);
-
+  // Find nearest qualifying zone (3+ touches within 0.5%)
+  const allZones = [...sr.support, ...sr.resistance].filter((z) => z.touches >= 3);
   let zone = null;
   let distance = Infinity;
-  for (const z of qualifying) {
+  for (const z of allZones) {
     const d = zoneDistance(currentPrice, z);
-    if (d > MAX_SIGNAL_DIST) continue;
-    if (direction === 'BUY' && currentPrice < z.low) continue;
-    if (direction === 'SELL' && currentPrice > z.high) continue;
+    if (d > MAX_ZONE_DIST) continue;
     if (d < distance) {
       distance = d;
       zone = z;
@@ -484,48 +305,44 @@ export function computeSignal(pair, weekly, daily, h4, sr) {
   }
 
   if (!zone) {
-    console.log(
-      `[${pair}] no qualifying zone in range for ${direction} (need 3+ touches within ${
-        MAX_SIGNAL_DIST * 100
-      }%)`
-    );
-    if (watch) {
-      console.log(`[${pair}] RESULT: WATCH (no directional zone in range)`);
-      return buildWatch(baseInfo, watch.zone, watch.distance, pair, 'No directional zone in range');
-    }
-    console.log(`[${pair}] RESULT: NO SETUP (${direction} but no qualifying zone, no watch)`);
-    return buildNonActionable(baseInfo, direction, 0, null, null, null, pair, 'No qualifying zone in range');
+    logSummary(pair, weeklyStructure, dailyStructure, h4Structure, 0, 'no_zone');
+    return {
+      ...baseInfo,
+      direction: 'NONE',
+      score: 0,
+      actionable: false,
+      entry: null,
+      sl: null,
+      tp: null,
+      rr: null,
+      slPips: null,
+      tpPips: null,
+      zone: null,
+      trigger: null,
+      psychLevel: null,
+      psychConfluence: false,
+      tpCappedBy: null,
+      reason: 'no_zone'
+    };
   }
 
-  console.log(
-    `[${pair}] selected zone: ${round(zone.mid, pair)} (${zone.touches}x touches, ${(
-      distance * 100
-    ).toFixed(2)}% away)`
-  );
+  // Direction from zone position (with fallback to trend if zone is centered on price)
+  let direction;
+  if (currentPrice >= zone.low) {
+    direction = 'BUY'; // price at/above zone → zone acts as support
+  } else {
+    direction = 'SELL'; // price below zone → zone acts as resistance
+  }
 
   // Triggers
   const breakRetest = isBreakRetest(daily, zone, direction);
   const lastH4 = h4?.length ? h4[h4.length - 1] : daily[daily.length - 1];
-  const rejection = rejectionDirection(lastH4);
+  const rej = rejectionDirection(lastH4);
   const rejectionMatches =
-    (direction === 'BUY' && rejection === 'BULLISH') ||
-    (direction === 'SELL' && rejection === 'BEARISH');
-  console.log(`[${pair}] triggers: BreakRetest=${breakRetest} Rejection=${rejectionMatches}`);
+    (direction === 'BUY' && rej === 'BULLISH') ||
+    (direction === 'SELL' && rej === 'BEARISH');
 
-  const trigger = triggerLabel(breakRetest, rejectionMatches);
   const psych = checkPsychConfluence(zone.mid, pair, PSYCH_TOLERANCE);
-  console.log(
-    `[${pair}] psych confluence: ${psych.confluent} (nearest psych: ${round(psych.level, pair)})`
-  );
-
-  if (!breakRetest && !rejectionMatches) {
-    if (watch) {
-      console.log(`[${pair}] RESULT: WATCH (no trigger fired; falling back to watch zone)`);
-      return buildWatch(baseInfo, watch.zone, watch.distance, pair, 'No entry trigger');
-    }
-    console.log(`[${pair}] RESULT: NO SETUP (no trigger fired)`);
-    return buildNonActionable(baseInfo, direction, 0, zone, null, psych, pair, 'No entry trigger');
-  }
 
   // Score
   let score = 0;
@@ -533,38 +350,79 @@ export function computeSignal(pair, weekly, daily, h4, sr) {
   else if (zone.touches >= 4) score += 30;
   else score += 20;
   if (psych.confluent) score += 25;
-  score += 20; // alignment bonus (halved later if WEAK)
+  // Alignment bonus
+  if (alignment.strength === 'STRONG' && alignment.direction === direction) score += 20;
+  else if (alignment.strength === 'WEAK' && alignment.direction === direction) score += 10;
+  // 4H confirms
   if (h4Structure === (direction === 'BUY' ? 'BULLISH' : 'BEARISH')) score += 10;
   if (breakRetest) score += 15;
   if (rejectionMatches) score += 15;
   if (distance <= 0.001) score += 10;
   else if (distance <= 0.003) score += 5;
-  const rawScore = Math.min(100, score);
-  const finalScore =
-    alignmentStrength === 'WEAK' ? Math.round(rawScore * 0.5) : rawScore;
-  console.log(
-    `[${pair}] score: raw=${rawScore} × (${alignmentStrength === 'WEAK' ? '0.5 weak' : '1.0 strong'}) = ${finalScore}`
-  );
 
-  if (finalScore < SCORE_THRESHOLD) {
-    if (watch) {
-      console.log(`[${pair}] RESULT: WATCH (score ${finalScore} < ${SCORE_THRESHOLD})`);
-      return buildWatch(baseInfo, watch.zone, watch.distance, pair, `Score ${finalScore} too low`);
-    }
-    console.log(`[${pair}] RESULT: NO SETUP (score ${finalScore} < ${SCORE_THRESHOLD})`);
-    return buildNonActionable(
-      baseInfo,
-      direction,
-      finalScore,
-      zone,
+  // Apply floors — strong zones near price always reach actionable
+  score = applyScoreFloors(score, zone, distance);
+  score = Math.min(100, Math.round(score));
+
+  const reason = determineReason(score, true, breakRetest, rejectionMatches, alignment.strength);
+  logSummary(pair, weeklyStructure, dailyStructure, h4Structure, score, reason);
+
+  const trigger = triggerLabel(breakRetest, rejectionMatches);
+  const zoneDescribed = {
+    low: round(zone.low, pair),
+    high: round(zone.high, pair),
+    mid: round(zone.mid, pair),
+    touches: zone.touches
+  };
+
+  // Band → display
+  if (score < 25) {
+    return {
+      ...baseInfo,
+      direction: 'NONE',
+      score,
+      actionable: false,
+      entry: null,
+      sl: null,
+      tp: null,
+      rr: null,
+      slPips: null,
+      tpPips: null,
+      zone: zoneDescribed,
       trigger,
-      psych,
-      pair,
-      `Score ${finalScore} below threshold`
-    );
+      psychLevel: psych.confluent ? round(psych.level, pair) : null,
+      psychConfluence: psych.confluent,
+      tpCappedBy: null,
+      reason
+    };
   }
 
-  const rr = finalScore >= 75 ? 4 : finalScore >= 55 ? 3 : 2;
+  if (score < 40) {
+    // WATCH band
+    return {
+      ...baseInfo,
+      direction: 'WATCH',
+      score,
+      actionable: false,
+      entry: round(zone.mid, pair),
+      sl: null,
+      tp: null,
+      rr: null,
+      slPips: null,
+      tpPips: null,
+      zone: zoneDescribed,
+      trigger,
+      psychLevel: psych.confluent ? round(psych.level, pair) : null,
+      psychConfluence: psych.confluent,
+      tpCappedBy: null,
+      watchDistance: Number((distance * 100).toFixed(2)),
+      reason
+    };
+  }
+
+  // Actionable: 40-59 → 1:2, 60-79 → 1:3, 80+ → 1:4
+  const rr = score >= 80 ? 4 : score >= 60 ? 3 : 2;
+  const tier = score >= 80 ? 'ELITE' : score >= 60 ? 'STRONG' : 'SIGNAL';
   const entry = zone.mid;
   const sl = placeStopLoss(direction, zone, daily, pair);
   const { tp, cappedBy } = placeTakeProfit(direction, entry, sl, rr, sr, pair);
@@ -572,29 +430,26 @@ export function computeSignal(pair, weekly, daily, h4, sr) {
   const slPips = Math.round(Math.abs(entry - sl) / pip);
   const tpPips = Math.round(Math.abs(tp - entry) / pip);
 
-  console.log(`[${pair}] RESULT: ${direction} score=${finalScore} rr=1:${rr} entry=${round(entry, pair)} sl=${round(sl, pair)} tp=${round(tp, pair)}`);
-
   return {
     ...baseInfo,
     direction,
-    score: finalScore,
+    score,
     actionable: true,
+    tier,
     entry: round(entry, pair),
     sl: round(sl, pair),
     tp: round(tp, pair),
     rr,
     slPips,
     tpPips,
-    zone: {
-      low: round(zone.low, pair),
-      high: round(zone.high, pair),
-      mid: round(zone.mid, pair),
-      touches: zone.touches
-    },
+    zone: zoneDescribed,
     trigger,
     psychLevel: psych.confluent ? round(psych.level, pair) : null,
     psychConfluence: psych.confluent,
-    tpCappedBy: cappedBy ? { mid: round(cappedBy.mid, pair), touches: cappedBy.touches } : null,
-    alignmentStrength
+    tpCappedBy: cappedBy
+      ? { mid: round(cappedBy.mid, pair), touches: cappedBy.touches }
+      : null,
+    alignmentStrength: alignment.strength,
+    reason
   };
 }

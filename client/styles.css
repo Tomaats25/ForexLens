@@ -264,22 +264,59 @@ html, body {
 }
 
 .direction.watch {
-  background: rgba(251, 191, 36, 0.18);
-  color: var(--warning);
+  background: rgba(139, 148, 158, 0.2);
+  color: var(--text-muted);
   font-weight: 700;
   letter-spacing: 0.05em;
 }
 
 .big-direction.watch {
-  color: var(--warning);
+  color: var(--text-muted);
 }
 
-.watch-card {
-  border-color: rgba(251, 191, 36, 0.35);
+/* Tier-based card borders — score band drives the color */
+.signal-card.tier-watch {
+  border-color: rgba(139, 148, 158, 0.35);
 }
 
-.watch-card:hover {
+.signal-card.tier-watch:hover {
+  border-color: var(--text-muted);
+}
+
+.signal-card.tier-signal {
+  border-color: rgba(251, 191, 36, 0.45);
+}
+
+.signal-card.tier-signal:hover {
   border-color: var(--warning);
+}
+
+.signal-card.tier-strong {
+  border-color: rgba(38, 166, 154, 0.5);
+}
+
+.signal-card.tier-strong:hover {
+  border-color: var(--buy);
+}
+
+.signal-card.tier-elite {
+  border-color: rgba(16, 185, 129, 0.7);
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.15);
+}
+
+.signal-card.tier-elite:hover {
+  border-color: #10b981;
+  box-shadow: 0 0 24px rgba(16, 185, 129, 0.3);
+}
+
+.watch-message {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: italic;
+  text-align: center;
+  padding: 6px 0 12px;
+  border-top: 1px solid var(--border);
+  margin-top: -4px;
 }
 
 .weak-badge {

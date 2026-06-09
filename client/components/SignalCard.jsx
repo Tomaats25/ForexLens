@@ -49,7 +49,9 @@ export default function SignalCard({ signal, onClick }) {
   const base = signal.pair.slice(0, 3);
   const quote = signal.pair.slice(3);
   const isWatch = signal.direction === 'WATCH';
+  const tier = signal.tier || (isWatch ? 'WATCH' : null);
   let cardClass = 'signal-card';
+  if (tier) cardClass += ` tier-${tier.toLowerCase()}`;
   if (!signal.actionable && !isWatch) cardClass += ' muted-card';
   if (isWatch) cardClass += ' watch-card';
   const mtf = signal.mtfAlignment || {};
@@ -141,6 +143,7 @@ export default function SignalCard({ signal, onClick }) {
         </>
       ) : isWatch ? (
         <>
+          <div className="watch-message">Monitor this level — wait for trigger</div>
           <div className="card-grid watch-grid">
             <div className="metric">
               <div className="metric-label">Level</div>
