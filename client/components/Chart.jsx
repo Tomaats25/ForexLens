@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import NewsFeed from './NewsFeed.jsx';
 
-export default function Chart({ pair, onClose }) {
+export default function Chart({ pair, onClose, onOpenChecklist }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const [timeframe, setTimeframe] = useState('daily');
@@ -149,6 +149,11 @@ export default function Chart({ pair, onClose }) {
             Weekly
           </button>
         </div>
+        {onOpenChecklist && data?.signal && (
+          <button className="checklist-btn" onClick={() => onOpenChecklist(data.signal)}>
+            Open Checklist →
+          </button>
+        )}
       </div>
 
       {error && <div className="error">⚠ {error}</div>}

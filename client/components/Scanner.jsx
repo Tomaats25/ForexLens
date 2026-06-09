@@ -22,7 +22,7 @@ function progressPct(progress) {
   return (newsPart + pairsPart) * 100;
 }
 
-export default function Scanner({ onSelectPair }) {
+export default function Scanner({ onSelectPair, onOpenChecklist }) {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
@@ -131,7 +131,12 @@ export default function Scanner({ onSelectPair }) {
             </div>
           ) : (
             results.results.map((r) => (
-              <SignalCard key={r.pair} signal={r} onClick={() => onSelectPair(r.pair)} />
+              <SignalCard
+                key={r.pair}
+                signal={r}
+                onClick={() => onSelectPair(r.pair)}
+                onOpenChecklist={() => onOpenChecklist?.(r.pair, r)}
+              />
             ))
           )}
         </div>
