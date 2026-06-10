@@ -1,7 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import NewsFeed from './NewsFeed.jsx';
 
-export default function Chart({ pair, onClose, onOpenChecklist }) {
+import { computeChecklistPercent, checklistScoreToRR } from './Checklist.jsx';
+
+export default function Chart({ pair, onClose, onOpenChecklist, savedChecklist }) {
+  const checklistPct = computeChecklistPercent(savedChecklist);
+  const checklistRR = checklistScoreToRR(checklistPct);
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const [timeframe, setTimeframe] = useState('daily');
@@ -169,7 +173,12 @@ export default function Chart({ pair, onClose, onOpenChecklist }) {
       {data?.signal?.actionable && (
         <div className="signal-summary">
           <div className={`big-direction ${data.signal.direction.toLowerCase()}`}>
-            {data.signal.direction} · Score {data.signal.score} · 1:{data.signal.rr}
+            {data.signal.direction}
+            {savedChecklist
+              ? checklistRR
+                ? ` · 1:${checklistRR}`
+                : ' · No Trade'
+              : ' · Open Checklist to score'}
           </div>
           <div className="signal-row">
             <span>
@@ -209,7 +218,7 @@ export default function Chart({ pair, onClose, onOpenChecklist }) {
       {data?.signal && !data.signal.actionable && data.signal.direction === 'WATCH' && (
         <div className="signal-summary watch">
           <div className="big-direction watch">
-            WATCH · Score {data.signal.score} · Strong zone at {data.signal.entry}
+            WATCH · Strong zone at {data.signal.entry}
           </div>
           <div className="signal-row">
             <span>
@@ -232,8 +241,8 @@ export default function Chart({ pair, onClose, onOpenChecklist }) {
         <div className="signal-summary muted">
           <div className="big-direction none">
             {data.signal.direction === 'NONE'
-              ? `No setup · Score ${data.signal.score}`
-              : `${data.signal.direction} · low confidence · Score ${data.signal.score}`}
+              ? 'No setup detected'
+              : `${data.signal.direction} · low confidence`}
           </div>
           <div className="signal-row">
             <span>

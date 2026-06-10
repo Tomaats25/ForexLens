@@ -22,7 +22,7 @@ function progressPct(progress) {
   return (newsPart + pairsPart) * 100;
 }
 
-export default function Scanner({ onSelectPair, onOpenChecklist }) {
+export default function Scanner({ onSelectPair, onOpenChecklist, savedChecklists = {} }) {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
@@ -136,6 +136,7 @@ export default function Scanner({ onSelectPair, onOpenChecklist }) {
                 signal={r}
                 onClick={() => onSelectPair(r.pair)}
                 onOpenChecklist={() => onOpenChecklist?.(r.pair, r)}
+                savedChecklist={savedChecklists[r.pair]}
               />
             ))
           )}

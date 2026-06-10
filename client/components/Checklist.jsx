@@ -65,30 +65,68 @@ function makeEmptyState() {
   return state;
 }
 
-function autoFillFromSignal(signal) {
+export function autoFillFromSignal(signal) {
   const state = makeEmptyState();
   if (!signal) return state;
 
   const mtf = signal.mtfAlignment || {};
+
+  // Trend per timeframe (only if not UNCLEAR)
   if (mtf.weekly && mtf.weekly !== 'UNCLEAR') state.weekly.trend = true;
   if (mtf.daily && mtf.daily !== 'UNCLEAR') state.daily.trend = true;
   if (mtf.h4 && mtf.h4 !== 'UNCLEAR') state.h4.trend = true;
 
+  // Round psychological level — weekly + daily
   if (signal.psychConfluence) {
     state.weekly.psych = true;
     state.daily.psych = true;
-    state.h4.psych = true;
   }
 
-  const supportDist = signal.nearestSupport?.distancePct ?? Infinity;
-  const resistanceDist = signal.nearestResistance?.distancePct ?? Infinity;
-  const nearZone = supportDist <= 0.3 || resistanceDist <= 0.3;
-  if (nearZone) {
+  // At AOI — price within 0.5% of a zone with 3+ touches
+  const ns = signal.nearestSupport;
+  const nr = signal.nearestResistance;
+  const supportNear = ns && ns.touches >= 3 && ns.distancePct <= 0.5;
+  const resistanceNear = nr && nr.touches >= 3 && nr.distancePct <= 0.5;
+  if (supportNear || resistanceNear) {
     state.weekly.aoi = true;
     state.daily.aoi = true;
   }
 
+  // Triggers from scanner → checklist items
+  const trigger = signal.trigger || '';
+  if (trigger.includes('Break & Retest')) {
+    state.weekly.pattern = true;
+    state.daily.pattern = true;
+  }
+  if (trigger.includes('Rejection')) {
+    state.weekly.candlestick_rejection = true;
+    state.daily.candlestick_rejection = true;
+  }
+
   return state;
+}
+
+// Single source of truth: re-runnable percentage from a saved checklist state.
+export function computeChecklistPercent(state) {
+  if (!state) return null;
+  let total = 0;
+  for (const section of SECTIONS) {
+    const ticks = state[section.id] || {};
+    const raw = section.items.reduce(
+      (sum, item) => sum + (ticks[item.id] ? item.points : 0),
+      0
+    );
+    total += Math.min(raw, section.max);
+  }
+  return Math.round((total / TOTAL_MAX) * 100);
+}
+
+// Map checklist percentage → numeric RR (or null = No Trade).
+export function checklistScoreToRR(pct) {
+  if (pct === null || pct === undefined || pct <= 50) return null;
+  if (pct <= 65) return 2;
+  if (pct <= 80) return 3;
+  return 4;
 }
 
 function computeSectionScore(section, state) {

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import Scanner from './components/Scanner.jsx';
 import Chart from './components/Chart.jsx';
-import Checklist from './components/Checklist.jsx';
+import Checklist, { autoFillFromSignal } from './components/Checklist.jsx';
 
 export default function App() {
   const [selectedPair, setSelectedPair] = useState(null);
@@ -10,6 +10,11 @@ export default function App() {
 
   function openChecklist(pair, signal) {
     setChecklistPair({ pair, signal });
+    // Auto-save the auto-filled state on first open — gives the scanner card a score immediately.
+    setSavedChecklists((prev) => {
+      if (prev[pair]) return prev;
+      return { ...prev, [pair]: autoFillFromSignal(signal) };
+    });
   }
 
   function saveChecklist(pair, state) {
@@ -24,13 +29,18 @@ export default function App() {
       </header>
       <main className="main">
         <div style={{ display: selectedPair ? 'none' : 'block' }}>
-          <Scanner onSelectPair={setSelectedPair} onOpenChecklist={openChecklist} />
+          <Scanner
+            onSelectPair={setSelectedPair}
+            onOpenChecklist={openChecklist}
+            savedChecklists={savedChecklists}
+          />
         </div>
         {selectedPair && (
           <Chart
             pair={selectedPair}
             onClose={() => setSelectedPair(null)}
             onOpenChecklist={(signal) => openChecklist(selectedPair, signal)}
+            savedChecklist={savedChecklists[selectedPair]}
           />
         )}
       </main>

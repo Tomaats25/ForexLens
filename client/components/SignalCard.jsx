@@ -1,4 +1,5 @@
 import React from 'react';
+import { computeChecklistPercent, checklistScoreToRR } from './Checklist.jsx';
 
 function sentimentArrow(v) {
   if (v > 0.2) return '↑';
@@ -45,7 +46,7 @@ function strengthBadgeClass(strength) {
   return 'none-badge';
 }
 
-export default function SignalCard({ signal, onClick, onOpenChecklist }) {
+export default function SignalCard({ signal, onClick, onOpenChecklist, savedChecklist }) {
   const base = signal.pair.slice(0, 3);
   const quote = signal.pair.slice(3);
   const isWatch = signal.direction === 'WATCH';
@@ -55,6 +56,10 @@ export default function SignalCard({ signal, onClick, onOpenChecklist }) {
   if (!signal.actionable && !isWatch) cardClass += ' muted-card';
   if (isWatch) cardClass += ' watch-card';
   const mtf = signal.mtfAlignment || {};
+
+  // Checklist is now the single source of truth for scoring + RR.
+  const checklistPct = computeChecklistPercent(savedChecklist);
+  const checklistRR = checklistScoreToRR(checklistPct);
 
   return (
     <div
@@ -73,9 +78,6 @@ export default function SignalCard({ signal, onClick, onOpenChecklist }) {
         <div className="pair-name">{signal.pair}</div>
         <div className={`direction ${directionClass(signal.direction)}`}>
           {directionLabel(signal)}
-        </div>
-        <div className="score" title="Score 0-100">
-          {signal.score}
         </div>
       </div>
 
@@ -96,7 +98,17 @@ export default function SignalCard({ signal, onClick, onOpenChecklist }) {
             </div>
             <div className="metric">
               <div className="metric-label">R:R</div>
-              <div className="metric-value">1:{signal.rr}</div>
+              <div className="metric-value">
+                {savedChecklist ? (
+                  checklistRR ? (
+                    <>1:{checklistRR}</>
+                  ) : (
+                    <span className="rr-no-trade">No Trade</span>
+                  )
+                ) : (
+                  <span className="rr-placeholder">Open Checklist to score</span>
+                )}
+              </div>
             </div>
           </div>
 
