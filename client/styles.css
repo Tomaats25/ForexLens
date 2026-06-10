@@ -263,6 +263,105 @@ html, body {
   font-weight: 600;
 }
 
+/* ── Checklist-driven tier system (A / B / C / NO TRADE) ───────── */
+
+.direction.no-trade {
+  background: rgba(139, 148, 158, 0.18);
+  color: var(--text-muted);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+/* Direction badge color flows from the card's checklist tier */
+.signal-card.tier-c .direction.buy,
+.signal-card.tier-c .direction.sell {
+  background: rgba(201, 209, 217, 0.18);
+  color: var(--text);
+}
+
+.signal-card.tier-b .direction.buy,
+.signal-card.tier-b .direction.sell {
+  background: rgba(251, 191, 36, 0.22);
+  color: var(--warning);
+}
+
+.signal-card.tier-a .direction.buy,
+.signal-card.tier-a .direction.sell {
+  background: rgba(16, 185, 129, 0.22);
+  color: #10b981;
+}
+
+/* Card border + glow per checklist tier */
+.signal-card.tier-c {
+  border-color: rgba(201, 209, 217, 0.4);
+}
+
+.signal-card.tier-c:hover {
+  border-color: var(--text);
+}
+
+.signal-card.tier-b {
+  border-color: rgba(251, 191, 36, 0.5);
+}
+
+.signal-card.tier-b:hover {
+  border-color: var(--warning);
+}
+
+.signal-card.tier-a {
+  border-color: rgba(16, 185, 129, 0.7);
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.15);
+}
+
+.signal-card.tier-a:hover {
+  border-color: #10b981;
+  box-shadow: 0 0 24px rgba(16, 185, 129, 0.3);
+}
+
+.signal-card.tier-no-trade {
+  border-color: rgba(139, 148, 158, 0.35);
+  opacity: 0.72;
+}
+
+.signal-card.tier-no-trade:hover {
+  opacity: 0.9;
+}
+
+/* Tier badge shown inside the Tier metric cell */
+.tier-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.tier-badge-c {
+  background: rgba(201, 209, 217, 0.18);
+  color: var(--text);
+}
+
+.tier-badge-b {
+  background: rgba(251, 191, 36, 0.22);
+  color: var(--warning);
+}
+
+.tier-badge-a {
+  background: rgba(16, 185, 129, 0.22);
+  color: #10b981;
+}
+
+.tier-badge-no-trade {
+  background: rgba(139, 148, 158, 0.18);
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
 .direction.watch {
   background: rgba(139, 148, 158, 0.2);
   color: var(--text-muted);
@@ -1010,33 +1109,28 @@ html, body {
   margin-top: 4px;
 }
 
-.confluence-summary.tier-weak .total-pct,
-.confluence-summary.tier-weak .total-label {
+.confluence-summary.tier-no-trade .total-pct,
+.confluence-summary.tier-no-trade .total-label {
   color: var(--sell);
 }
 
-.confluence-summary.tier-possible .total-pct,
-.confluence-summary.tier-possible .total-label {
-  color: #fb923c;
+.confluence-summary.tier-c .total-pct,
+.confluence-summary.tier-c .total-label {
+  color: var(--text);
 }
 
-.confluence-summary.tier-good .total-pct,
-.confluence-summary.tier-good .total-label {
+.confluence-summary.tier-b .total-pct,
+.confluence-summary.tier-b .total-label {
   color: var(--warning);
 }
 
-.confluence-summary.tier-strong .total-pct,
-.confluence-summary.tier-strong .total-label {
-  color: var(--buy);
-}
-
-.confluence-summary.tier-perfect .total-pct,
-.confluence-summary.tier-perfect .total-label {
+.confluence-summary.tier-a .total-pct,
+.confluence-summary.tier-a .total-label {
   color: #10b981;
   text-shadow: 0 0 24px rgba(16, 185, 129, 0.35);
 }
 
-.confluence-summary.tier-perfect {
+.confluence-summary.tier-a {
   border-color: rgba(16, 185, 129, 0.55);
   box-shadow: 0 0 24px rgba(16, 185, 129, 0.12);
 }

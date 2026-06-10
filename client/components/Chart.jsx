@@ -1,11 +1,23 @@
 import React, { useEffect, useRef, useState } from 'react';
 import NewsFeed from './NewsFeed.jsx';
 
-import { computeChecklistPercent, checklistScoreToRR } from './Checklist.jsx';
+import { computeChecklistPercent, checklistTier } from './Checklist.jsx';
+
+function pipSize(pair) {
+  return pair.includes('JPY') ? 0.01 : 0.0001;
+}
+
+function formatPrice(price, pair) {
+  const decimals = pair.includes('JPY') ? 3 : 5;
+  return Number(price.toFixed(decimals));
+}
 
 export default function Chart({ pair, onClose, onOpenChecklist, savedChecklist }) {
   const checklistPct = computeChecklistPercent(savedChecklist);
-  const checklistRR = checklistScoreToRR(checklistPct);
+  const tier = checklistTier(checklistPct);
+  const hasChecklist = checklistPct !== null;
+  const isNoTrade = hasChecklist && checklistPct < 70;
+  const isScored = hasChecklist && checklistPct >= 70;
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const [timeframe, setTimeframe] = useState('daily');
@@ -170,50 +182,80 @@ export default function Chart({ pair, onClose, onOpenChecklist, savedChecklist }
 
       <div className="chart-container" ref={containerRef} />
 
-      {data?.signal?.actionable && (
-        <div className="signal-summary">
-          <div className={`big-direction ${data.signal.direction.toLowerCase()}`}>
-            {data.signal.direction}
-            {savedChecklist
-              ? checklistRR
-                ? ` · 1:${checklistRR}`
-                : ' · No Trade'
-              : ' · Open Checklist to score'}
-          </div>
-          <div className="signal-row">
-            <span>
-              Entry: <strong>{data.signal.entry}</strong>
-            </span>
-            <span>
-              TP: <strong className="tp">{data.signal.tp}</strong> ({data.signal.tpPips}p)
-            </span>
-            <span>
-              SL: <strong className="sl">{data.signal.sl}</strong> ({data.signal.slPips}p)
-            </span>
-            <span>
-              Trigger: <strong>{data.signal.trigger || '—'}</strong>
-            </span>
-            <span>
-              Psych:{' '}
-              <strong>
-                {data.signal.psychConfluence ? `YES (${data.signal.psychLevel})` : 'NO'}
-              </strong>
-            </span>
-            <span>
-              MTF: <strong>
-                W {data.signal.mtfAlignment.weekly} · D {data.signal.mtfAlignment.daily} · 4H{' '}
-                {data.signal.mtfAlignment.h4}
-                {data.signal.mtfAlignment.allAligned ? ' · Aligned' : ''}
-              </strong>
-            </span>
-            {data.signal.tpCappedBy && (
-              <span>
-                TP capped near <strong>{data.signal.tpCappedBy.mid}</strong>
-              </span>
+      {data?.signal?.actionable && (() => {
+        // Recompute TP from checklist tier RR when scored.
+        let displayTP = data.signal.tp;
+        let displayTpPips = data.signal.tpPips;
+        if (isScored && tier && tier.rr && data.signal.entry !== null && data.signal.sl !== null) {
+          const slDist = Math.abs(data.signal.entry - data.signal.sl);
+          const newTP =
+            data.signal.direction === 'BUY'
+              ? data.signal.entry + slDist * tier.rr
+              : data.signal.entry - slDist * tier.rr;
+          displayTP = formatPrice(newTP, data.pair);
+          displayTpPips = Math.round(
+            Math.abs(displayTP - data.signal.entry) / pipSize(data.pair)
+          );
+        }
+
+        const directionClass = isNoTrade
+          ? 'no-trade'
+          : data.signal.direction.toLowerCase();
+        const headerText = isNoTrade
+          ? 'NO TRADE'
+          : hasChecklist
+            ? `${data.signal.direction} · ${tier.letter} Tier · 1:${tier.rr}`
+            : `${data.signal.direction} · Open Checklist to score`;
+
+        return (
+          <div className={`signal-summary${tier ? ` tier-${tier.tier}` : ''}`}>
+            <div className={`big-direction ${directionClass}`}>{headerText}</div>
+            {!isNoTrade && (
+              <div className="signal-row">
+                <span>
+                  Entry: <strong>{data.signal.entry}</strong>
+                </span>
+                <span>
+                  TP: <strong className="tp">{displayTP}</strong> ({displayTpPips}p)
+                </span>
+                <span>
+                  SL: <strong className="sl">{data.signal.sl}</strong> ({data.signal.slPips}p)
+                </span>
+                <span>
+                  Trigger: <strong>{data.signal.trigger || '—'}</strong>
+                </span>
+                <span>
+                  Psych:{' '}
+                  <strong>
+                    {data.signal.psychConfluence ? `YES (${data.signal.psychLevel})` : 'NO'}
+                  </strong>
+                </span>
+                <span>
+                  MTF:{' '}
+                  <strong>
+                    W {data.signal.mtfAlignment.weekly} · D {data.signal.mtfAlignment.daily} · 4H{' '}
+                    {data.signal.mtfAlignment.h4}
+                    {data.signal.mtfAlignment.allAligned ? ' · Aligned' : ''}
+                  </strong>
+                </span>
+                {data.signal.tpCappedBy && (
+                  <span>
+                    TP capped near <strong>{data.signal.tpCappedBy.mid}</strong>
+                  </span>
+                )}
+              </div>
+            )}
+            {isNoTrade && (
+              <div className="signal-row">
+                <span>
+                  Checklist score:{' '}
+                  <strong>{checklistPct}%</strong> · below 70% threshold
+                </span>
+              </div>
             )}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {data?.signal && !data.signal.actionable && data.signal.direction === 'WATCH' && (
         <div className="signal-summary watch">

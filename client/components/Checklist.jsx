@@ -121,12 +121,11 @@ export function computeChecklistPercent(state) {
   return Math.round((total / TOTAL_MAX) * 100);
 }
 
-// Map checklist percentage → numeric RR (or null = No Trade).
+// Map checklist percentage → numeric RR (or null = No Trade). New tier system.
 export function checklistScoreToRR(pct) {
-  if (pct === null || pct === undefined || pct <= 50) return null;
-  if (pct <= 65) return 2;
-  if (pct <= 80) return 3;
-  return 4;
+  if (pct === null || pct === undefined || pct < 70) return null;
+  if (pct >= 90) return 2.5;
+  return 2;
 }
 
 function computeSectionScore(section, state) {
@@ -139,18 +138,25 @@ function computeSectionScore(section, state) {
 }
 
 function scoreLabel(pct) {
-  if (pct >= 86) return { label: 'Perfect Setup', tier: 'perfect' };
-  if (pct >= 71) return { label: 'Strong Setup', tier: 'strong' };
-  if (pct >= 51) return { label: 'Good Setup', tier: 'good' };
-  if (pct >= 31) return { label: 'Possible Setup', tier: 'possible' };
-  return { label: 'Weak Setup', tier: 'weak' };
+  if (pct >= 90) return { label: 'A Tier — Strong Setup', tier: 'a' };
+  if (pct >= 80) return { label: 'B Tier — Good Setup', tier: 'b' };
+  if (pct >= 70) return { label: 'C Tier — Valid Setup', tier: 'c' };
+  return { label: 'No Trade', tier: 'no-trade' };
 }
 
 function scoreRR(pct) {
-  if (pct <= 50) return 'No Trade';
-  if (pct <= 65) return '1:2 RR';
-  if (pct <= 80) return '1:3 RR';
-  return '1:4 RR';
+  if (pct < 70) return 'No Trade';
+  if (pct >= 90) return 'Target RR: 1:2.5';
+  return 'Target RR: 1:2';
+}
+
+// Tier descriptor — used by SignalCard / Chart to render the badge and recompute TP.
+export function checklistTier(pct) {
+  if (pct === null || pct === undefined) return null;
+  if (pct >= 90) return { letter: 'A', label: 'A Tier — Strong Setup', tier: 'a', rr: 2.5 };
+  if (pct >= 80) return { letter: 'B', label: 'B Tier — Good Setup', tier: 'b', rr: 2 };
+  if (pct >= 70) return { letter: 'C', label: 'C Tier — Valid Setup', tier: 'c', rr: 2 };
+  return { letter: 'NO TRADE', label: 'No Trade', tier: 'no-trade', rr: null };
 }
 
 function Toggle({ checked, onChange, label }) {
