@@ -11,12 +11,12 @@ const SHARED_TF_ITEMS = [
 ];
 
 const SECTIONS = [
-  { id: 'weekly', name: 'Weekly', max: 40, items: SHARED_TF_ITEMS },
-  { id: 'daily', name: 'Daily', max: 40, items: SHARED_TF_ITEMS },
+  { id: 'weekly', name: 'Weekly', max: 60, items: SHARED_TF_ITEMS },
+  { id: 'daily', name: 'Daily', max: 60, items: SHARED_TF_ITEMS },
   {
     id: 'h4',
     name: '4H',
-    max: 35,
+    max: 45,
     items: [
       { id: 'trend', label: 'Trend', points: 5 },
       { id: 'aoi', label: 'At AOI / Rejected', points: 5 },
@@ -132,15 +132,13 @@ function Toggle({ checked, onChange, label }) {
 
 function ChecklistSection({ section, state, onToggle }) {
   const score = computeSectionScore(section, state);
-  const pct = section.max ? Math.round((score / section.max) * 100) : 0;
 
   return (
     <div className="checklist-section">
       <div className="checklist-section-head">
         <h3>{section.name}</h3>
         <div className="checklist-section-score">
-          <span className="section-pct">{pct}%</span>
-          <span className="section-raw">
+          <span className="section-pct">
             {score}/{section.max}
           </span>
         </div>
@@ -262,7 +260,7 @@ export default function Checklist({ pair, signal, savedState, onClose, onSave })
                 <li key={section.id}>
                   <span>{section.name}</span>
                   <span className="confluence-pct">
-                    {Math.round((score / section.max) * 100)}%
+                    {score}/{section.max}
                   </span>
                 </li>
               ))}
