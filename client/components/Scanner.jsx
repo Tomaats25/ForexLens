@@ -74,7 +74,11 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
           setWarnings((w) => [...w, `${event.pair}: ${event.message}`]);
         } else if (event.type === 'done') {
           finished = true;
-          setResults({ scannedAt: event.scannedAt, results: event.results });
+          setResults({
+            scannedAt: event.scannedAt,
+            // Tag each result with the scan date so checklist records can store it
+            results: event.results.map((r) => ({ ...r, scannedAt: event.scannedAt }))
+          });
           setLoading(false);
           setProgress(null);
           es.close();
@@ -99,6 +103,21 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
       es.close();
     };
   }
+
+  // "This Week" summary from saved checklist records
+  const checklistRecords = Object.values(savedChecklists || {}).filter(Boolean);
+  const tierCounts = checklistRecords.reduce((acc, rec) => {
+    if (rec?.tier) acc[rec.tier] = (acc[rec.tier] || 0) + 1;
+    return acc;
+  }, {});
+  const summaryParts = [
+    tierCounts.A ? `${tierCounts.A} A tier` : null,
+    tierCounts.B ? `${tierCounts.B} B tier` : null,
+    tierCounts.C ? `${tierCounts.C} C tier` : null,
+    tierCounts['NO TRADE'] ? `${tierCounts['NO TRADE']} No Trade` : null
+  ]
+    .filter(Boolean)
+    .join(', ');
 
   const groups = results
     ? [
@@ -128,6 +147,13 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
           </span>
         )}
       </div>
+
+      {checklistRecords.length > 0 && (
+        <div className="week-summary">
+          <strong>{checklistRecords.length} reviewed</strong>
+          {summaryParts ? ` — ${summaryParts}` : ''}
+        </div>
+      )}
 
       {error && <div className="error">⚠ {error}</div>}
 

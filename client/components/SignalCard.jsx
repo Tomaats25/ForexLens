@@ -54,10 +54,26 @@ export default function SignalCard({ signal, onClick, onOpenChart, onOpenCheckli
   const isWatch = signal.direction === 'WATCH';
   const mtf = signal.mtfAlignment || {};
 
-  // Checklist drives tier + RR + visibility
-  const checklistPct = computeChecklistPercent(savedChecklist);
+  // Checklist drives tier + RR + visibility (savedChecklist is a stored record)
+  const checklistPct = computeChecklistPercent(savedChecklist?.state);
   const tier = checklistTier(checklistPct); // null when no checklist
   const hasChecklist = checklistPct !== null;
+
+  // Review-status dot: grey = not scored, red = No Trade, yellow = C/B, green = A
+  let dotClass = 'dot-grey';
+  let dotTitle = 'Not scored yet';
+  if (hasChecklist) {
+    if (checklistPct >= 90) {
+      dotClass = 'dot-green';
+      dotTitle = `A tier · ${checklistPct}%`;
+    } else if (checklistPct >= 70) {
+      dotClass = 'dot-yellow';
+      dotTitle = `${checklistPct >= 80 ? 'B' : 'C'} tier · ${checklistPct}%`;
+    } else {
+      dotClass = 'dot-red';
+      dotTitle = `No Trade · ${checklistPct}%`;
+    }
+  }
   const isNoTrade = hasChecklist && checklistPct < 70;
   const isScored = hasChecklist && checklistPct >= 70;
 
@@ -120,6 +136,7 @@ export default function SignalCard({ signal, onClick, onOpenChart, onOpenCheckli
       }}
     >
       <div className="card-top">
+        <span className={`status-dot ${dotClass}`} title={dotTitle} />
         <div className="pair-name">{signal.pair}</div>
         <div className={`direction ${directionClassName}`}>{directionText}</div>
       </div>

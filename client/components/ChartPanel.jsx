@@ -43,7 +43,7 @@ export default function ChartPanel({ pair, signal, savedChecklist, onClose }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const checklistPct = computeChecklistPercent(savedChecklist);
+  const checklistPct = computeChecklistPercent(savedChecklist?.state);
   const tier = checklistTier(checklistPct);
   const isScored = checklistPct !== null && checklistPct >= 70;
 

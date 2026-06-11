@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 
 const SHARED_TF_ITEMS = [
   { id: 'trend', label: 'Trend', points: 10 },
@@ -208,12 +208,30 @@ function ChecklistSection({ section, state, onToggle }) {
 }
 
 export default function Checklist({ pair, signal, savedState, onClose, onSave }) {
+  // savedState is a stored record: { state, scorePct, tier, updatedAt, scannedAt }
   const initial = useMemo(
-    () => savedState || autoFillFromSignal(signal),
+    () => savedState?.state || autoFillFromSignal(signal),
     [pair, signal, savedState]
   );
   const [state, setState] = useState(initial);
-  const [savedFlash, setSavedFlash] = useState(false);
+  const [restoredFrom, setRestoredFrom] = useState(savedState?.updatedAt || null);
+  const [lastSavedAt, setLastSavedAt] = useState(null);
+  const mountedRef = useRef(false);
+
+  // Auto-save on every change. On mount, only persist fresh auto-fills —
+  // restored checklists keep their stored timestamp until a real edit.
+  useEffect(() => {
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      if (!restoredFrom) {
+        onSave(state);
+        setLastSavedAt(new Date());
+      }
+      return;
+    }
+    onSave(state);
+    setLastSavedAt(new Date());
+  }, [state]);
 
   const sectionScores = useMemo(
     () => SECTIONS.map((s) => ({ section: s, score: computeSectionScore(s, state) })),
@@ -240,12 +258,12 @@ export default function Checklist({ pair, signal, savedState, onClose, onSave })
 
   function reset() {
     setState(makeEmptyState());
+    setRestoredFrom(null);
   }
 
-  function save() {
-    onSave(state);
-    setSavedFlash(true);
-    setTimeout(() => setSavedFlash(false), 1500);
+  function resetToAutoFill() {
+    setState(autoFillFromSignal(signal));
+    setRestoredFrom(null);
   }
 
   return (
@@ -263,6 +281,16 @@ export default function Checklist({ pair, signal, savedState, onClose, onSave })
         </div>
 
         <div className="checklist-body">
+          {restoredFrom && (
+            <div className="restore-banner">
+              <span>
+                Saved from {new Date(restoredFrom).toLocaleString()} — toggles restored
+              </span>
+              <button type="button" onClick={resetToAutoFill}>
+                Reset to auto-fill
+              </button>
+            </div>
+          )}
           {SECTIONS.map((section) => (
             <ChecklistSection
               key={section.id}
@@ -321,9 +349,11 @@ export default function Checklist({ pair, signal, savedState, onClose, onSave })
           <button className="checklist-reset" onClick={reset}>
             Reset
           </button>
-          <button className="checklist-save" onClick={save}>
-            {savedFlash ? 'Saved ✓' : 'Save'}
-          </button>
+          <span className="autosave-note">
+            {lastSavedAt
+              ? `Auto-saved ${lastSavedAt.toLocaleTimeString()}`
+              : 'Auto-saves on every change'}
+          </span>
         </div>
       </aside>
     </>
