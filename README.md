@@ -70,6 +70,7 @@ Open http://localhost:3000
 |--------|-------------------|--------------------------------------------|
 | GET    | `/api/scan`       | Runs a full scan, returns ranked signals   |
 | GET    | `/api/pair/:sym`  | OHLC + S/R + signal for one pair           |
+| GET    | `/api/chart/:sym/:tf` | Candles + S/R zones + EMA + psych levels (tf: weekly / daily / 4h) |
 | GET    | `/api/news/:cur`  | Latest news + sentiment for a currency     |
 
 ## How it works

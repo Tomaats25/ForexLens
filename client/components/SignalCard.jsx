@@ -48,7 +48,7 @@ function formatPrice(price, pair) {
   return Number(price.toFixed(decimals));
 }
 
-export default function SignalCard({ signal, onClick, onOpenChecklist, savedChecklist }) {
+export default function SignalCard({ signal, onClick, onOpenChart, onOpenChecklist, savedChecklist }) {
   const base = signal.pair.slice(0, 3);
   const quote = signal.pair.slice(3);
   const isWatch = signal.direction === 'WATCH';
@@ -108,10 +108,11 @@ export default function SignalCard({ signal, onClick, onOpenChecklist, savedChec
   return (
     <div
       className={cardClass}
-      onClick={onClick}
+      onClick={() => onClick?.()}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
+        if (!onClick) return;
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           onClick();
@@ -320,18 +321,32 @@ export default function SignalCard({ signal, onClick, onOpenChecklist, savedChec
         </span>
       </div>
 
-      {onOpenChecklist && (
+      {(onOpenChart || onOpenChecklist) && (
         <div className="card-actions">
-          <button
-            type="button"
-            className="checklist-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenChecklist();
-            }}
-          >
-            Open Checklist →
-          </button>
+          {onOpenChart && (
+            <button
+              type="button"
+              className="chart-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenChart();
+              }}
+            >
+              Open Chart →
+            </button>
+          )}
+          {onOpenChecklist && (
+            <button
+              type="button"
+              className="checklist-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenChecklist();
+              }}
+            >
+              Open Checklist →
+            </button>
+          )}
         </div>
       )}
     </div>

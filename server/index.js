@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import { initDB } from './db.js';
 import { getOHLC } from './data.js';
 import { detectSR } from './sr.js';
-import { computeSignal } from './signals.js';
+import { computeSignal, computeEMASeries } from './signals.js';
 import { getNews, getCurrencySentiment, summarizeArticles } from './news.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -166,6 +166,73 @@ app.get('/api/news/:cur', async (req, res) => {
     res.json({ currency: cur, articles, sentiment: Number(sentiment.toFixed(2)) });
   } catch (err) {
     console.error('News error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const CHART_TIMEFRAMES = {
+  w: { interval: '1week', count: 52 },
+  weekly: { interval: '1week', count: 52 },
+  d: { interval: '1day', count: 90 },
+  daily: { interval: '1day', count: 90 },
+  '4h': { interval: '4h', count: 90 }
+};
+
+function stepLevels(min, max, step) {
+  const out = [];
+  for (let n = Math.ceil(min / step); n * step <= max + 1e-9; n++) {
+    out.push(Number((n * step).toFixed(5)));
+  }
+  return out;
+}
+
+// Round-number levels inside the candle range, doubling the step until <= 10 lines.
+function psychLevelsInRange(min, max, pair) {
+  let step = pair.includes('JPY') ? 0.5 : 0.05;
+  let levels = stepLevels(min, max, step);
+  while (levels.length > 10) {
+    step *= 2;
+    levels = stepLevels(min, max, step);
+  }
+  return levels;
+}
+
+app.get('/api/chart/:sym/:tf', async (req, res) => {
+  try {
+    const sym = req.params.sym.toUpperCase();
+    if (!PAIRS.includes(sym)) {
+      return res.status(404).json({ error: 'Pair not supported' });
+    }
+    const tfKey = req.params.tf.toLowerCase();
+    const tf = CHART_TIMEFRAMES[tfKey];
+    if (!tf) {
+      return res.status(400).json({ error: 'Timeframe must be weekly, daily, or 4h' });
+    }
+
+    const candlesFull = await getOHLC(sym, tf.interval, tf.count);
+    const candles = candlesFull.slice(-90);
+
+    // Zones always come from weekly+daily (cache hits after any scan)
+    const weekly = tf.interval === '1week' ? candlesFull : await getOHLC(sym, '1week', 52);
+    const daily = tf.interval === '1day' ? candlesFull : await getOHLC(sym, '1day', 90);
+    const srAll = detectSR(weekly, daily);
+    const sr = {
+      support: srAll.support.filter((z) => z.touches >= 3),
+      resistance: srAll.resistance.filter((z) => z.touches >= 3)
+    };
+
+    const ema = computeEMASeries(candles, 20);
+    const currentPrice = candles.length ? candles[candles.length - 1].close : null;
+    let psychLevels = [];
+    if (candles.length) {
+      const min = Math.min(...candles.map((c) => c.low));
+      const max = Math.max(...candles.map((c) => c.high));
+      psychLevels = psychLevelsInRange(min, max, sym);
+    }
+
+    res.json({ pair: sym, timeframe: tfKey, candles, sr, ema, psychLevels, currentPrice });
+  } catch (err) {
+    console.error('Chart error:', err);
     res.status(500).json({ error: err.message });
   }
 });

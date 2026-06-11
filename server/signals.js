@@ -453,3 +453,16 @@ export function computeSignal(pair, weekly, daily, h4, sr) {
     reason
   };
 }
+
+// EMA series aligned to candle times — used by the chart route.
+export function computeEMASeries(candles, period = 20) {
+  if (!candles || candles.length < period) return [];
+  const k = 2 / (period + 1);
+  let prev = candles.slice(0, period).reduce((s, c) => s + c.close, 0) / period;
+  const out = [{ time: candles[period - 1].time, value: prev }];
+  for (let i = period; i < candles.length; i++) {
+    prev = candles[i].close * k + prev * (1 - k);
+    out.push({ time: candles[i].time, value: prev });
+  }
+  return out;
+}

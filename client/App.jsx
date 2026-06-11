@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import Scanner from './components/Scanner.jsx';
-import Chart from './components/Chart.jsx';
+import ChartPanel from './components/ChartPanel.jsx';
+import SignalCard from './components/SignalCard.jsx';
+import NewsFeed from './components/NewsFeed.jsx';
 import Checklist, { autoFillFromSignal } from './components/Checklist.jsx';
 
 export default function App() {
-  const [selectedPair, setSelectedPair] = useState(null);
+  const [chartPair, setChartPair] = useState(null); // { pair, signal }
   const [checklistPair, setChecklistPair] = useState(null);
   const [savedChecklists, setSavedChecklists] = useState({});
 
@@ -21,6 +23,13 @@ export default function App() {
     setSavedChecklists((prev) => ({ ...prev, [pair]: state }));
   }
 
+  function openChart(pair, signal) {
+    setChartPair({ pair, signal });
+  }
+
+  const base = chartPair ? chartPair.pair.slice(0, 3) : null;
+  const quote = chartPair ? chartPair.pair.slice(3) : null;
+
   return (
     <div className="app">
       <header className="header">
@@ -28,20 +37,37 @@ export default function App() {
         <span className="tagline">Weekly Forex Market Scanner</span>
       </header>
       <main className="main">
-        <div style={{ display: selectedPair ? 'none' : 'block' }}>
+        <div style={{ display: chartPair ? 'none' : 'block' }}>
           <Scanner
-            onSelectPair={setSelectedPair}
+            onOpenChart={openChart}
             onOpenChecklist={openChecklist}
             savedChecklists={savedChecklists}
           />
         </div>
-        {selectedPair && (
-          <Chart
-            pair={selectedPair}
-            onClose={() => setSelectedPair(null)}
-            onOpenChecklist={(signal) => openChecklist(selectedPair, signal)}
-            savedChecklist={savedChecklists[selectedPair]}
-          />
+        {chartPair && (
+          <div className="chart-split">
+            <div className="chart-split-left">
+              <SignalCard
+                signal={chartPair.signal}
+                savedChecklist={savedChecklists[chartPair.pair]}
+                onOpenChecklist={() => openChecklist(chartPair.pair, chartPair.signal)}
+              />
+              <div className="news-column">
+                <h3>{base} News</h3>
+                <NewsFeed currency={base} />
+              </div>
+              <div className="news-column">
+                <h3>{quote} News</h3>
+                <NewsFeed currency={quote} />
+              </div>
+            </div>
+            <ChartPanel
+              pair={chartPair.pair}
+              signal={chartPair.signal}
+              savedChecklist={savedChecklists[chartPair.pair]}
+              onClose={() => setChartPair(null)}
+            />
+          </div>
         )}
       </main>
       {checklistPair && (
