@@ -1,14 +1,30 @@
 import React, { useState, useRef, useEffect } from 'react';
 import SignalCard from './SignalCard.jsx';
 
-const STAGE_WEIGHTS = { news: 0.3, pairs: 0.7 };
+const STAGE_WEIGHTS = { news: 0.1, pairs: 0.9 };
+
+const FILTERS = [
+  { id: 'all', label: 'All Pairs' },
+  { id: 'major', label: 'Majors Only' },
+  { id: 'cross', label: 'Crosses Only' }
+];
+
+function formatEta(seconds) {
+  if (seconds === null || seconds === undefined || seconds < 5) return '';
+  if (seconds >= 120) {
+    const m = Math.floor(seconds / 60);
+    const s = Math.round(seconds % 60);
+    return ` ~${m}m ${s}s remaining`;
+  }
+  return ` ~${Math.round(seconds)}s remaining`;
+}
 
 function progressText(progress) {
   if (!progress) return 'Starting scan…';
   if (progress.stage === 'news') {
-    return `Loading news sentiment: ${progress.label} (${progress.current}/${progress.total})`;
+    return `Loading news sentiment: ${progress.label} (${progress.current}/${progress.total})${formatEta(progress.etaSeconds)}`;
   }
-  return `Scanning ${progress.label}… (${progress.current}/${progress.total})`;
+  return `Scanning ${progress.label}… (${progress.current}/${progress.total})${formatEta(progress.etaSeconds)}`;
 }
 
 function progressPct(progress) {
@@ -16,7 +32,6 @@ function progressPct(progress) {
   if (progress.stage === 'news') {
     return (progress.current / progress.total) * STAGE_WEIGHTS.news * 100;
   }
-  // After news stage completes, pairs stage starts at 30%
   const newsPart = STAGE_WEIGHTS.news;
   const pairsPart = (progress.current / progress.total) * STAGE_WEIGHTS.pairs;
   return (newsPart + pairsPart) * 100;
@@ -28,6 +43,7 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
   const [error, setError] = useState(null);
   const [progress, setProgress] = useState(null);
   const [warnings, setWarnings] = useState([]);
+  const [filter, setFilter] = useState('all');
   const esRef = useRef(null);
 
   useEffect(() => {
@@ -84,6 +100,21 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
     };
   }
 
+  const groups = results
+    ? [
+        {
+          id: 'major',
+          title: 'MAJORS',
+          items: results.results.filter((r) => r.category === 'major')
+        },
+        {
+          id: 'cross',
+          title: 'CROSSES',
+          items: results.results.filter((r) => r.category !== 'major')
+        }
+      ].filter((g) => g.items.length > 0 && (filter === 'all' || filter === g.id))
+    : [];
+
   return (
     <div className="scanner">
       <div className="scanner-header">
@@ -93,7 +124,7 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
         {results && (
           <span className="scan-meta">
             Scanned {new Date(results.scannedAt).toLocaleString()} ·{' '}
-            {results.results.length} signal{results.results.length === 1 ? '' : 's'}
+            {results.results.length} pair{results.results.length === 1 ? '' : 's'}
           </span>
         )}
       </div>
@@ -104,13 +135,11 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
         <div className="scanning">
           <div className="progress-text">{progressText(progress)}</div>
           <div className="progress-bar">
-            <div
-              className="progress-fill"
-              style={{ width: `${progressPct(progress)}%` }}
-            />
+            <div className="progress-fill" style={{ width: `${progressPct(progress)}%` }} />
           </div>
           <p className="muted">
-            Sequential fetch with 500ms throttle to respect free-tier limits.
+            Rate-limited to one API call per 8s (Twelve Data free tier). Cold scans take a
+            few minutes; cached re-scans finish in seconds.
           </p>
           {warnings.length > 0 && (
             <div className="progress-warnings">
@@ -123,32 +152,60 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
       )}
 
       {results && !loading && (
-        <div className="results">
-          {results.results.length === 0 ? (
+        <>
+          <div className="pair-filter">
+            {FILTERS.map((f) => (
+              <button
+                key={f.id}
+                className={filter === f.id ? 'active' : ''}
+                onClick={() => setFilter(f.id)}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          {groups.length === 0 ? (
             <div className="empty">
-              <p>No high-confidence signals this week.</p>
-              <p className="muted">All pairs scored below 40 — wait for cleaner setups.</p>
+              <p>No pairs to show.</p>
+              <p className="muted">
+                {results.results.length === 0
+                  ? 'The scan returned no data — check the server logs.'
+                  : 'No pairs match this filter.'}
+              </p>
             </div>
           ) : (
-            results.results.map((r) => (
-              <SignalCard
-                key={r.pair}
-                signal={r}
-                onClick={() => onOpenChart?.(r.pair, r)}
-                onOpenChart={() => onOpenChart?.(r.pair, r)}
-                onOpenChecklist={() => onOpenChecklist?.(r.pair, r)}
-                savedChecklist={savedChecklists[r.pair]}
-              />
+            groups.map((g) => (
+              <div key={g.id} className="results-group">
+                <div className="results-group-header">
+                  <span>{g.title}</span>
+                  <span className="group-count">
+                    {g.items.length} pair{g.items.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+                <div className="results">
+                  {g.items.map((r) => (
+                    <SignalCard
+                      key={r.pair}
+                      signal={r}
+                      onClick={() => onOpenChart?.(r.pair, r)}
+                      onOpenChart={() => onOpenChart?.(r.pair, r)}
+                      onOpenChecklist={() => onOpenChecklist?.(r.pair, r)}
+                      savedChecklist={savedChecklists[r.pair]}
+                    />
+                  ))}
+                </div>
+              </div>
             ))
           )}
-        </div>
+        </>
       )}
 
       {!results && !loading && !error && (
         <div className="welcome">
           <p>Click "Scan This Week" to find the best forex opportunities.</p>
           <p className="muted">
-            7 major pairs · S/R detection · 20-week EMA trend · News sentiment
+            16 pairs (7 majors + 9 crosses) · S/R detection · MTF trend · Checklist scoring
           </p>
         </div>
       )}

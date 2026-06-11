@@ -4,7 +4,7 @@ A weekly forex market scanner that detects the best trading opportunities based 
 
 ## Features
 
-- Scans 7 major forex pairs: EURUSD, GBPUSD, USDJPY, USDCHF, AUDUSD, USDCAD, NZDUSD
+- Scans 16 pairs — 7 majors (EURUSD, GBPUSD, USDJPY, USDCHF, AUDUSD, USDCAD, NZDUSD) + 9 crosses (GBPJPY, EURJPY, GBPCHF, EURGBP, EURCAD, AUDJPY, EURAUD, GBPAUD, CADJPY)
 - Detects support/resistance zones from weekly (52w) and daily (90d) swing points
 - Computes trend via 20-week EMA
 - Generates BUY/SELL signals with entry, TP, SL, and risk/reward ratio
@@ -107,5 +107,6 @@ forexlens/
 ## Caveats
 
 - This is an analytical tool, **not financial advice**.
-- Free API tiers are rate-limited. A full scan needs ~14 Twelve Data calls (2/pair) and up to 8 NewsAPI calls. The 6-hour OHLC cache and 1-hour news cache mean repeat scans are essentially free.
-- First-ever scan on a fresh DB may hit Twelve Data's 8/min limit — affected pairs are skipped gracefully; rerun to fill them in.
+- Free API tiers are rate-limited. A cold scan needs 48 Twelve Data calls (3 per pair × 16 pairs), throttled to one call per 8 seconds — so a fully cold scan takes ~6-7 minutes. The 6-hour OHLC cache and 1-hour news cache mean repeat scans finish in seconds.
+- The scan streams live progress (current pair, count, ETA) so the UI never looks frozen.
+- Twelve Data's free tier allows 800 calls/day — roughly 16 fully cold scans.

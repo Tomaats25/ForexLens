@@ -2,12 +2,12 @@ import { getCachedOHLC, setCachedOHLC } from './db.js';
 
 const CACHE_TTL = 6 * 60 * 60 * 1000;
 const API_BASE = 'https://api.twelvedata.com';
-const RATE_LIMIT_MS = 500;
+const RATE_LIMIT_MS = 8000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Twelve Data free tier: 8 calls/min. We sleep 500ms between every
-// individual fetch so back-to-back calls don't burst into a 429.
+// Twelve Data free tier: 8 calls/min. 8s between calls = max 7.5/min,
+// safely under the limit even on long scans. Cache hits skip the throttle.
 let lastFetchAt = 0;
 async function throttle() {
   const elapsed = Date.now() - lastFetchAt;
@@ -55,4 +55,9 @@ export async function getOHLC(pair, interval, count) {
 
   setCachedOHLC(pair, interval, ohlc);
   return ohlc;
+}
+
+// True when a fresh cached copy exists — used for scan ETA estimates.
+export function isCached(pair, interval) {
+  return getCachedOHLC(pair, interval, CACHE_TTL) !== null;
 }

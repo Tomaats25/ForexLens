@@ -4,7 +4,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDB } from './db.js';
-import { getOHLC } from './data.js';
+import { getOHLC, isCached } from './data.js';
 import { detectSR } from './sr.js';
 import { computeSignal, computeEMASeries } from './signals.js';
 import { getNews, getCurrencySentiment, summarizeArticles } from './news.js';
@@ -17,13 +17,32 @@ dotenv.config({ path: path.join(__dirname, '..', '.env') });
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const PAIRS = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD'];
+const MAJORS = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD'];
+const CROSSES = [
+  'GBPJPY', 'EURJPY', 'GBPCHF', 'EURGBP', 'EURCAD',
+  'AUDJPY', 'EURAUD', 'GBPAUD', 'CADJPY'
+];
+const PAIRS = [...MAJORS, ...CROSSES];
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'AUD', 'CAD', 'NZD'];
 
 app.use(cors());
 app.use(express.json());
 
 initDB();
+
+// ETA = uncached Twelve Data calls remaining × throttle interval.
+// Cache-aware, so it self-corrects as the scan fills the cache.
+const SECONDS_PER_CALL = 8;
+function estimateRemainingSeconds(fromIndex) {
+  let calls = 0;
+  for (let j = fromIndex; j < PAIRS.length; j++) {
+    const p = PAIRS[j];
+    if (!isCached(p, '1week')) calls++;
+    if (!isCached(p, '1day')) calls++;
+    if (!isCached(p, '4h')) calls++;
+  }
+  return calls * SECONDS_PER_CALL;
+}
 
 app.get('/api/scan', async (_req, res) => {
   // Server-Sent Events: stream progress while the scan runs.
@@ -47,7 +66,8 @@ app.get('/api/scan', async (_req, res) => {
         stage: 'news',
         current: i + 1,
         total: CURRENCIES.length,
-        label: cur
+        label: cur,
+        etaSeconds: estimateRemainingSeconds(0)
       });
       sentiments[cur] = await getCurrencySentiment(cur);
       try {
@@ -66,7 +86,8 @@ app.get('/api/scan', async (_req, res) => {
         stage: 'pairs',
         current: i + 1,
         total: PAIRS.length,
-        label: pair
+        label: pair,
+        etaSeconds: estimateRemainingSeconds(i)
       });
 
       try {
@@ -88,6 +109,7 @@ app.get('/api/scan', async (_req, res) => {
 
         results.push({
           pair,
+          category: MAJORS.includes(pair) ? 'major' : 'cross',
           ...signal,
           sentiment: {
             base: Number((sentiments[base] || 0).toFixed(2)),
