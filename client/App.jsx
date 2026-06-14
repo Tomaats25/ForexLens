@@ -19,6 +19,7 @@ export default function App() {
   const [checklistPair, setChecklistPair] = useState(null);
   const [savedChecklists, setSavedChecklists] = useState(() => loadAllChecklists());
   const [previousWeek, setPreviousWeek] = useState(() => checkNewWeek());
+  const [scanMeta, setScanMeta] = useState(null); // { scannedAt, count }
 
   function openChecklist(pair, signal) {
     setChecklistPair({ pair, signal });
@@ -50,9 +51,26 @@ export default function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1>ForexLens</h1>
-        <span className="tagline">Weekly Forex Market Scanner</span>
+        <div className="header-brand">
+          <div className="logo">
+            <span className="logo-forex">Forex</span>
+            <span className="logo-lens">Lens</span>
+          </div>
+          <span className="tagline">Weekly Market Scanner</span>
+        </div>
+        {scanMeta && (
+          <span className="header-pill">
+            <span className="header-pill-dot" />
+            {new Date(scanMeta.scannedAt).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit'
+            })}
+            <span className="header-pill-sep">·</span>
+            {scanMeta.count} pairs
+          </span>
+        )}
       </header>
+
       {previousWeek && (
         <div className="week-banner">
           <span>
@@ -63,12 +81,14 @@ export default function App() {
           </button>
         </div>
       )}
+
       <main className="main">
         <div style={{ display: chartPair ? 'none' : 'block' }}>
           <Scanner
             onOpenChart={openChart}
             onOpenChecklist={openChecklist}
             savedChecklists={savedChecklists}
+            onScanMeta={setScanMeta}
           />
         </div>
         {chartPair && (
@@ -97,6 +117,7 @@ export default function App() {
           </div>
         )}
       </main>
+
       {checklistPair && (
         <Checklist
           key={checklistPair.pair}
@@ -107,6 +128,7 @@ export default function App() {
           onSave={(state) => saveChecklist(checklistPair.pair, state, checklistPair.signal)}
         />
       )}
+
       <footer className="footer">
         <span>Not financial advice. Analytical signals only.</span>
       </footer>

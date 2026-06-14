@@ -37,7 +37,49 @@ function progressPct(progress) {
   return (newsPart + pairsPart) * 100;
 }
 
-export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists = {} }) {
+function RefreshIcon({ spinning }) {
+  return (
+    <svg
+      className={`refresh-icon ${spinning ? 'spinning' : ''}`}
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <path d="M21 3v6h-6" />
+    </svg>
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <div className="skeleton-card">
+      <div className="skeleton-top">
+        <div className="skeleton-line skeleton-pair" />
+        <div className="skeleton-pill" />
+      </div>
+      <div className="skeleton-grid">
+        <div className="skeleton-cell" />
+        <div className="skeleton-cell" />
+        <div className="skeleton-cell" />
+        <div className="skeleton-cell" />
+      </div>
+      <div className="skeleton-line skeleton-row" />
+      <div className="skeleton-actions">
+        <div className="skeleton-btn" />
+        <div className="skeleton-btn" />
+      </div>
+    </div>
+  );
+}
+
+export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists = {}, onScanMeta }) {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
@@ -79,6 +121,7 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
             // Tag each result with the scan date so checklist records can store it
             results: event.results.map((r) => ({ ...r, scannedAt: event.scannedAt }))
           });
+          onScanMeta?.({ scannedAt: event.scannedAt, count: event.results.length });
           setLoading(false);
           setProgress(null);
           es.close();
@@ -104,20 +147,17 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
     };
   }
 
-  // "This Week" summary from saved checklist records
-  const checklistRecords = Object.values(savedChecklists || {}).filter(Boolean);
-  const tierCounts = checklistRecords.reduce((acc, rec) => {
-    if (rec?.tier) acc[rec.tier] = (acc[rec.tier] || 0) + 1;
-    return acc;
-  }, {});
-  const summaryParts = [
-    tierCounts.A ? `${tierCounts.A} A tier` : null,
-    tierCounts.B ? `${tierCounts.B} B tier` : null,
-    tierCounts.C ? `${tierCounts.C} C tier` : null,
-    tierCounts['NO TRADE'] ? `${tierCounts['NO TRADE']} No Trade` : null
-  ]
-    .filter(Boolean)
-    .join(', ');
+  // Colored tier breakdown across the scanned pairs (tiers come from saved checklists)
+  let summary = null;
+  if (results) {
+    const counts = { A: 0, B: 0, C: 0, 'NO TRADE': 0, unscored: 0 };
+    for (const r of results.results) {
+      const tier = savedChecklists[r.pair]?.tier;
+      if (tier && counts[tier] !== undefined) counts[tier] += 1;
+      else counts.unscored += 1;
+    }
+    summary = { total: results.results.length, counts };
+  }
 
   const groups = results
     ? [
@@ -134,31 +174,22 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
       ].filter((g) => g.items.length > 0 && (filter === 'all' || filter === g.id))
     : [];
 
+  // Continuous index across groups so the fade-in stagger flows top to bottom
+  let cardIndex = 0;
+
   return (
     <div className="scanner">
-      <div className="scanner-header">
-        <button className="scan-btn" onClick={scan} disabled={loading}>
-          {loading ? 'Scanning…' : 'Scan This Week'}
-        </button>
-        {results && (
-          <span className="scan-meta">
-            Scanned {new Date(results.scannedAt).toLocaleString()} ·{' '}
-            {results.results.length} pair{results.results.length === 1 ? '' : 's'}
-          </span>
-        )}
-      </div>
-
-      {checklistRecords.length > 0 && (
-        <div className="week-summary">
-          <strong>{checklistRecords.length} reviewed</strong>
-          {summaryParts ? ` — ${summaryParts}` : ''}
-        </div>
-      )}
-
-      {error && <div className="error">⚠ {error}</div>}
+      <button
+        className={`scan-btn ${loading ? 'scanning' : ''}`}
+        onClick={scan}
+        disabled={loading}
+      >
+        <RefreshIcon spinning={loading} />
+        {loading ? 'Scanning…' : 'Scan This Week'}
+      </button>
 
       {loading && (
-        <div className="scanning">
+        <div className="scan-progress">
           <div className="progress-text">{progressText(progress)}</div>
           <div className="progress-bar">
             <div className="progress-fill" style={{ width: `${progressPct(progress)}%` }} />
@@ -177,8 +208,42 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
         </div>
       )}
 
+      {error && <div className="error">⚠ {error}</div>}
+
+      {loading && (
+        <div className="results skeletons">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <SkeletonCard key={i} />
+          ))}
+        </div>
+      )}
+
       {results && !loading && (
         <>
+          {summary && (
+            <div className="summary-bar">
+              <span className="summary-count">Scanned {summary.total} pairs</span>
+              <span className="summary-sep">—</span>
+              <span className="summary-tiers">
+                {summary.counts.A > 0 && (
+                  <span className="sum-a">{summary.counts.A} A tier</span>
+                )}
+                {summary.counts.B > 0 && (
+                  <span className="sum-b">{summary.counts.B} B tier</span>
+                )}
+                {summary.counts.C > 0 && (
+                  <span className="sum-c">{summary.counts.C} C tier</span>
+                )}
+                {summary.counts['NO TRADE'] > 0 && (
+                  <span className="sum-notrade">{summary.counts['NO TRADE']} no trade</span>
+                )}
+                {summary.counts.unscored > 0 && (
+                  <span className="sum-unscored">{summary.counts.unscored} not scored</span>
+                )}
+              </span>
+            </div>
+          )}
+
           <div className="pair-filter">
             {FILTERS.map((f) => (
               <button
@@ -192,11 +257,17 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
           </div>
 
           {groups.length === 0 ? (
-            <div className="empty">
-              <p>No pairs to show.</p>
-              <p className="muted">
+            <div className="empty-state">
+              <div className="empty-icon" aria-hidden="true">
+                <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="M21 21l-4.3-4.3" />
+                </svg>
+              </div>
+              <p className="empty-title">No setups found this week</p>
+              <p className="empty-sub">
                 {results.results.length === 0
-                  ? 'The scan returned no data — check the server logs.'
+                  ? 'All pairs scored below 70% — check back after the weekly candle closes.'
                   : 'No pairs match this filter.'}
               </p>
             </div>
@@ -210,16 +281,24 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
                   </span>
                 </div>
                 <div className="results">
-                  {g.items.map((r) => (
-                    <SignalCard
-                      key={r.pair}
-                      signal={r}
-                      onClick={() => onOpenChart?.(r.pair, r)}
-                      onOpenChart={() => onOpenChart?.(r.pair, r)}
-                      onOpenChecklist={() => onOpenChecklist?.(r.pair, r)}
-                      savedChecklist={savedChecklists[r.pair]}
-                    />
-                  ))}
+                  {g.items.map((r) => {
+                    const delay = cardIndex++ * 80;
+                    return (
+                      <div
+                        key={r.pair}
+                        className="card-fade-in"
+                        style={{ animationDelay: `${delay}ms` }}
+                      >
+                        <SignalCard
+                          signal={r}
+                          onClick={() => onOpenChart?.(r.pair, r)}
+                          onOpenChart={() => onOpenChart?.(r.pair, r)}
+                          onOpenChecklist={() => onOpenChecklist?.(r.pair, r)}
+                          savedChecklist={savedChecklists[r.pair]}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ))
@@ -229,7 +308,7 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
 
       {!results && !loading && !error && (
         <div className="welcome">
-          <p>Click "Scan This Week" to find the best forex opportunities.</p>
+          <p className="welcome-title">Scan the market for this week's best setups</p>
           <p className="muted">
             16 pairs (7 majors + 9 crosses) · S/R detection · MTF trend · Checklist scoring
           </p>

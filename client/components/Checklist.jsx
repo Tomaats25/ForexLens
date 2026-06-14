@@ -207,6 +207,29 @@ function ChecklistSection({ section, state, onToggle }) {
   );
 }
 
+// Smoothly animates a number toward `target` (eased) — used for the total score.
+function useCountUp(target, duration = 500) {
+  const [value, setValue] = useState(target);
+  const fromRef = useRef(target);
+  const rafRef = useRef(0);
+  useEffect(() => {
+    const from = fromRef.current;
+    if (from === target) return;
+    const start = performance.now();
+    cancelAnimationFrame(rafRef.current);
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setValue(Math.round(from + (target - from) * eased));
+      if (t < 1) rafRef.current = requestAnimationFrame(tick);
+      else fromRef.current = target;
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [target, duration]);
+  return value;
+}
+
 export default function Checklist({ pair, signal, savedState, onClose, onSave }) {
   // savedState is a stored record: { state, scorePct, tier, updatedAt, scannedAt }
   const initial = useMemo(
@@ -239,6 +262,7 @@ export default function Checklist({ pair, signal, savedState, onClose, onSave })
   );
   const totalScore = sectionScores.reduce((sum, s) => sum + s.score, 0);
   const totalPct = Math.round((totalScore / TOTAL_MAX) * 100);
+  const displayPct = useCountUp(totalPct);
   const verdict = scoreLabel(totalPct);
   const rr = scoreRR(totalPct);
 
@@ -338,7 +362,7 @@ export default function Checklist({ pair, signal, savedState, onClose, onSave })
               ))}
             </ul>
             <div className="confluence-total">
-              <div className="total-pct">{totalPct}%</div>
+              <div className="total-pct">{displayPct}%</div>
               <div className="total-label">{verdict.label}</div>
               <div className="total-rr">{rr}</div>
             </div>
