@@ -1,9 +1,14 @@
-// ForexLens scoring — relaxed MTF + score floors.
+// ForexLens scoring — AOI-based (Set & Forget).
 //
-// Trend detection: avg of last 2 closes vs avg of prior 2 closes on each timeframe.
-// Alignment: STRONG (W==D), WEAK (one unclear), MIXED (W vs D opposite), NONE (both no data).
-// Score floors: strong zones near price always reach a SIGNAL band even without triggers.
-// Bands: 80+ elite (1:4) · 60-79 strong (1:3) · 40-59 signal (1:2) · 25-39 watch · <25 no setup.
+// Zones come from server/sr.js as Areas of Interest (body-rejection price zones).
+// A directional setup needs price AT an AOI (within 10 pips of an edge):
+//   support AOI (price above) → BUY · resistance AOI (price below) → SELL.
+// Price INSIDE an AOI → WATCH (breakout / rejection).
+// Entry = zone midpoint. SL = 5 pips beyond the far/near edge. TP = SL distance × RR.
+
+const AT_AOI_PIPS = 10; // price is "at AOI" within 10 pips of an edge
+const WATCH_NEAR_PIPS = 30; // strong zone this close (but not at) → WATCH
+const SL_BUFFER_PIPS = 5;
 
 function pipSize(pair) {
   return pair.includes('JPY') ? 0.01 : 0.0001;
@@ -28,7 +33,6 @@ function atr(candles, period = 14) {
 }
 
 // SIMPLE structure detection: average of last 2 closes vs average of prior 2 closes.
-// Only returns UNCLEAR when fewer than 5 candles are available.
 function getStructure(candles) {
   if (!candles || candles.length < 5) return 'UNCLEAR';
   const window = candles.slice(-10);
@@ -52,45 +56,66 @@ function computeAlignment(weeklyStructure, dailyStructure) {
   return { strength: 'MIXED', direction: null };
 }
 
-function zoneDistance(price, zone) {
-  if (price >= zone.low && price <= zone.high) return 0;
-  if (price > zone.high) return (price - zone.high) / price;
-  return (zone.low - price) / price;
+// Pip distance from price to the nearest edge of an AOI zone (0 if inside).
+function edgePips(price, zone, pip) {
+  if (price >= zone.bottom && price <= zone.top) return 0;
+  if (price > zone.top) return (price - zone.top) / pip;
+  return (zone.bottom - price) / pip;
 }
 
-function nearestZone(price, zones) {
+function nearestZoneOf(price, zones, pip) {
   let best = null;
-  let bestDist = Infinity;
-  for (const z of zones) {
-    const d = zoneDistance(price, z);
-    if (d < bestDist) {
-      bestDist = d;
+  let bestPips = Infinity;
+  for (const z of zones || []) {
+    const p = edgePips(price, z, pip);
+    if (p < bestPips) {
+      bestPips = p;
       best = z;
     }
   }
-  return best ? { zone: best, distance: bestDist } : null;
+  return best ? { zone: best, pips: bestPips } : null;
 }
 
-function describeZone(zone, distance, pair) {
+function describeNearest(near, pair, pip) {
+  if (!near) return null;
+  const z = near.zone;
   return {
-    mid: round(zone.mid, pair),
-    low: round(zone.low, pair),
-    high: round(zone.high, pair),
-    touches: zone.touches,
-    distancePct: Number((distance * 100).toFixed(2))
+    type: z.type,
+    top: z.top,
+    bottom: z.bottom,
+    midpoint: z.midpoint,
+    pips_wide: z.pips_wide,
+    weighted_score: z.weighted_score,
+    touch_count: z.touch_count,
+    timeframe: z.timeframe,
+    is_psychological: z.is_psychological,
+    // legacy aliases (autofill + ChartPanel read these)
+    mid: z.midpoint,
+    low: z.bottom,
+    high: z.top,
+    touches: z.weighted_score,
+    distancePips: Math.round(near.pips),
+    distancePct: Number((((near.pips * pip) / (z.midpoint || 1)) * 100).toFixed(2))
   };
 }
 
-function nearestPsychLevel(price, pair) {
-  const step = pair.includes('JPY') ? 0.5 : 0.05;
-  return Math.round(price / step) * step;
-}
-
-function checkPsychConfluence(zoneMid, pair, tolerance = 0.0015) {
-  const psych = nearestPsychLevel(zoneMid, pair);
+// Curated AOI zone for the signal output (new fields + legacy aliases).
+function describeZone(z, pair) {
   return {
-    level: psych,
-    confluent: psych > 0 && Math.abs(zoneMid - psych) / zoneMid <= tolerance
+    type: z.type,
+    top: round(z.top, pair),
+    bottom: round(z.bottom, pair),
+    midpoint: round(z.midpoint, pair),
+    pips_wide: z.pips_wide,
+    touch_count: z.touch_count,
+    weighted_score: z.weighted_score,
+    timeframe: z.timeframe,
+    is_psychological: z.is_psychological,
+    psychLevel: z.psych_level ?? null,
+    low: round(z.bottom, pair),
+    high: round(z.top, pair),
+    mid: round(z.midpoint, pair),
+    touches: z.weighted_score
   };
 }
 
@@ -100,11 +125,11 @@ function isBreakRetest(daily, zone, direction) {
   if (history.length === 0) return false;
   const lastClose = daily[daily.length - 1].close;
   if (direction === 'BUY') {
-    const wasBelow = history.some((c) => c.close < zone.low);
-    return wasBelow && lastClose >= zone.low;
+    const wasBelow = history.some((c) => c.close < zone.bottom);
+    return wasBelow && lastClose >= zone.bottom;
   }
-  const wasAbove = history.some((c) => c.close > zone.high);
-  return wasAbove && lastClose <= zone.high;
+  const wasAbove = history.some((c) => c.close > zone.top);
+  return wasAbove && lastClose <= zone.top;
 }
 
 function rejectionDirection(candle) {
@@ -124,82 +149,22 @@ function rejectionDirection(candle) {
   return null;
 }
 
-function findSwingLowsBelow(daily, threshold, lookback = 2, window = 40) {
-  const recent = daily.slice(-window);
-  const lows = [];
-  for (let i = lookback; i < recent.length - lookback; i++) {
-    const c = recent[i];
-    if (c.low >= threshold) continue;
-    let isSwing = true;
-    for (let j = 1; j <= lookback; j++) {
-      if (recent[i - j].low <= c.low || recent[i + j].low <= c.low) {
-        isSwing = false;
-        break;
-      }
-    }
-    if (isSwing) lows.push(c.low);
-  }
-  return lows;
-}
-
-function findSwingHighsAbove(daily, threshold, lookback = 2, window = 40) {
-  const recent = daily.slice(-window);
-  const highs = [];
-  for (let i = lookback; i < recent.length - lookback; i++) {
-    const c = recent[i];
-    if (c.high <= threshold) continue;
-    let isSwing = true;
-    for (let j = 1; j <= lookback; j++) {
-      if (recent[i - j].high >= c.high || recent[i + j].high >= c.high) {
-        isSwing = false;
-        break;
-      }
-    }
-    if (isSwing) highs.push(c.high);
-  }
-  return highs;
-}
-
-function placeStopLoss(direction, zone, daily, pair) {
-  const pip = pipSize(pair);
-  const buffer = pair.includes('JPY') ? 10 * pip : 5 * pip;
-  if (direction === 'BUY') {
-    const defaultSL = zone.low - buffer;
-    const swings = findSwingLowsBelow(daily, zone.low);
-    if (swings.length > 0) {
-      const highest = Math.max(...swings);
-      const swingSL = highest - pip;
-      if (swingSL < zone.low && swingSL > defaultSL) return swingSL;
-    }
-    return defaultSL;
-  }
-  const defaultSL = zone.high + buffer;
-  const swings = findSwingHighsAbove(daily, zone.high);
-  if (swings.length > 0) {
-    const lowest = Math.min(...swings);
-    const swingSL = lowest + pip;
-    if (swingSL > zone.high && swingSL < defaultSL) return swingSL;
-  }
-  return defaultSL;
-}
-
+// TP = SL distance × RR, capped just short of the next opposing AOI in the path.
 function placeTakeProfit(direction, entry, sl, rr, sr, pair) {
   const pip = pipSize(pair);
   const slDist = Math.abs(entry - sl);
   let tp = direction === 'BUY' ? entry + slDist * rr : entry - slDist * rr;
   let cappedBy = null;
-  const opposing = (direction === 'BUY' ? sr.resistance : sr.support).filter(
-    (z) => z.touches >= 3
-  );
+  const opposing = (direction === 'BUY' ? sr.resistance : sr.support) || [];
   for (const z of opposing) {
-    if (direction === 'BUY' && z.low > entry && z.low < tp) {
-      const capped = z.low - pip;
+    if (direction === 'BUY' && z.bottom > entry && z.bottom < tp) {
+      const capped = z.bottom - pip;
       if (capped > entry) {
         tp = capped;
         cappedBy = z;
       }
-    } else if (direction === 'SELL' && z.high < entry && z.high > tp) {
-      const capped = z.high + pip;
+    } else if (direction === 'SELL' && z.top < entry && z.top > tp) {
+      const capped = z.top + pip;
       if (capped < entry) {
         tp = capped;
         cappedBy = z;
@@ -216,20 +181,7 @@ function triggerLabel(breakRetest, rejection) {
   return null;
 }
 
-// Score floors: strong zones near price always reach actionable, regardless of triggers/trend.
-function applyScoreFloors(score, zone, distance) {
-  let floor = 0;
-  if (zone.touches >= 3 && distance <= 0.001) floor = Math.max(floor, 40);
-  if (zone.touches >= 5 && distance <= 0.002) floor = Math.max(floor, 45);
-  if (zone.touches >= 8 && distance <= 0.005) floor = Math.max(floor, 55);
-  return Math.max(score, floor);
-}
-
-const MAX_ZONE_DIST = 0.005; // 0.5% — relaxed from prior 0.3%
-const PSYCH_TOLERANCE = 0.0015;
-
-function determineReason(score, hasZone, hasBR, hasRejection, alignmentStrength) {
-  if (!hasZone) return 'no_zone';
+function determineReason(score, hasBR, hasRejection, alignmentStrength) {
   if (score >= 80) return 'elite';
   if (score >= 60) return 'strong';
   if (score >= 40) return 'signal';
@@ -241,30 +193,29 @@ function determineReason(score, hasZone, hasBR, hasRejection, alignmentStrength)
   return 'low_score';
 }
 
-function buildBaseInfo(pair, daily, sr, weeklyStructure, dailyStructure, h4Structure, alignment) {
-  const currentPrice = daily[daily.length - 1].close;
-  const sNear = nearestZone(currentPrice, sr.support);
-  const rNear = nearestZone(currentPrice, sr.resistance);
+function buildBaseInfo(pair, currentPrice, daily, sr, w, d, h4, alignment) {
+  const pip = pipSize(pair);
+  const sNear = nearestZoneOf(currentPrice, sr.support, pip);
+  const rNear = nearestZoneOf(currentPrice, sr.resistance, pip);
   return {
     currentPrice: round(currentPrice, pair),
     trend: alignment.direction || 'MIXED',
     atr: round(atr(daily, 14), pair),
     mtfAlignment: {
-      weekly: weeklyStructure,
-      daily: dailyStructure,
-      h4: h4Structure,
+      weekly: w,
+      daily: d,
+      h4: h4,
       strength: alignment.strength,
-      allAligned:
-        alignment.strength === 'STRONG' && h4Structure === weeklyStructure
+      allAligned: alignment.strength === 'STRONG' && h4 === w
     },
-    nearestSupport: sNear ? describeZone(sNear.zone, sNear.distance, pair) : null,
-    nearestResistance: rNear ? describeZone(rNear.zone, rNear.distance, pair) : null
+    nearestSupport: describeNearest(sNear, pair, pip),
+    nearestResistance: describeNearest(rNear, pair, pip)
   };
 }
 
-function logSummary(pair, weeklyStructure, dailyStructure, h4Structure, score, reason) {
+function logSummary(pair, w, d, h4, score, reason) {
   console.log(
-    `${pair}: weekly=${weeklyStructure.toLowerCase()} daily=${dailyStructure.toLowerCase()} 4H=${h4Structure.toLowerCase()} score=${score} reason=${reason}`
+    `${pair}: weekly=${w.toLowerCase()} daily=${d.toLowerCase()} 4H=${h4.toLowerCase()} score=${score} reason=${reason}`
   );
 }
 
@@ -277,10 +228,13 @@ export function computeSignal(pair, weekly, daily, h4, sr) {
   const weeklyStructure = getStructure(weekly);
   const dailyStructure = getStructure(daily);
   const h4Structure = h4?.length ? getStructure(h4) : 'UNCLEAR';
-
   const alignment = computeAlignment(weeklyStructure, dailyStructure);
+
+  const currentPrice = daily[daily.length - 1].close;
+  const pip = pipSize(pair);
   const baseInfo = buildBaseInfo(
     pair,
+    currentPrice,
     daily,
     sr,
     weeklyStructure,
@@ -289,133 +243,181 @@ export function computeSignal(pair, weekly, daily, h4, sr) {
     alignment
   );
 
-  const currentPrice = daily[daily.length - 1].close;
+  const zones =
+    sr.zones && sr.zones.length
+      ? sr.zones
+      : [...(sr.support || []), ...(sr.resistance || []), ...(sr.inside || [])];
 
-  // Find nearest qualifying zone (3+ touches within 0.5%)
-  const allZones = [...sr.support, ...sr.resistance].filter((z) => z.touches >= 3);
-  let zone = null;
-  let distance = Infinity;
-  for (const z of allZones) {
-    const d = zoneDistance(currentPrice, z);
-    if (d > MAX_ZONE_DIST) continue;
-    if (d < distance) {
-      distance = d;
-      zone = z;
+  // Active AOI = nearest by edge distance (ties → higher weighted score).
+  let active = null;
+  let activePips = Infinity;
+  for (const z of zones) {
+    const p = edgePips(currentPrice, z, pip);
+    if (p < activePips - 1e-9 || (Math.abs(p - activePips) < 1e-9 && active && z.weighted_score > active.weighted_score)) {
+      activePips = p;
+      active = z;
     }
   }
 
-  if (!zone) {
+  const emptySignal = (reason) => ({
+    ...baseInfo,
+    direction: 'NONE',
+    score: 0,
+    actionable: false,
+    entry: null,
+    sl: null,
+    tp: null,
+    rr: null,
+    slPips: null,
+    tpPips: null,
+    zone: active ? describeZone(active, pair) : null,
+    trigger: null,
+    psychLevel: null,
+    psychConfluence: false,
+    tpCappedBy: null,
+    insideAOI: false,
+    atAOI: false,
+    aoiPips: active ? Math.round(activePips) : null,
+    reason
+  });
+
+  if (!active) {
     logSummary(pair, weeklyStructure, dailyStructure, h4Structure, 0, 'no_zone');
+    return emptySignal('no_zone');
+  }
+
+  const inside = currentPrice >= active.bottom && currentPrice <= active.top;
+  const atAOI = !inside && activePips <= AT_AOI_PIPS;
+  const zoneOut = describeZone(active, pair);
+
+  // INSIDE an AOI → WATCH for breakout / rejection.
+  if (inside) {
+    logSummary(pair, weeklyStructure, dailyStructure, h4Structure, 0, 'inside_aoi');
     return {
       ...baseInfo,
-      direction: 'NONE',
+      direction: 'WATCH',
       score: 0,
       actionable: false,
-      entry: null,
+      entry: round(active.midpoint, pair),
       sl: null,
       tp: null,
       rr: null,
       slPips: null,
       tpPips: null,
-      zone: null,
+      zone: zoneOut,
       trigger: null,
-      psychLevel: null,
-      psychConfluence: false,
+      psychLevel: active.psych_level ?? null,
+      psychConfluence: active.is_psychological,
       tpCappedBy: null,
-      reason: 'no_zone'
+      insideAOI: true,
+      atAOI: false,
+      aoiPips: 0,
+      watchDistance: 0,
+      reason: 'inside_aoi'
     };
   }
 
-  // Direction from zone position (with fallback to trend if zone is centered on price)
-  let direction;
-  if (currentPrice >= zone.low) {
-    direction = 'BUY'; // price at/above zone → zone acts as support
-  } else {
-    direction = 'SELL'; // price below zone → zone acts as resistance
+  // Not inside, and not within 10 pips of an edge.
+  if (!atAOI) {
+    if (active.weighted_score >= 6 && activePips <= WATCH_NEAR_PIPS) {
+      logSummary(pair, weeklyStructure, dailyStructure, h4Structure, 0, 'near_strong_aoi');
+      return {
+        ...baseInfo,
+        direction: 'WATCH',
+        score: 0,
+        actionable: false,
+        entry: round(active.midpoint, pair),
+        sl: null,
+        tp: null,
+        rr: null,
+        slPips: null,
+        tpPips: null,
+        zone: zoneOut,
+        trigger: null,
+        psychLevel: active.psych_level ?? null,
+        psychConfluence: active.is_psychological,
+        tpCappedBy: null,
+        insideAOI: false,
+        atAOI: false,
+        aoiPips: Math.round(activePips),
+        watchDistance: Math.round(activePips),
+        reason: 'near_strong_aoi'
+      };
+    }
+    logSummary(pair, weeklyStructure, dailyStructure, h4Structure, 0, 'not_at_aoi');
+    return emptySignal('not_at_aoi');
   }
 
-  // Triggers
-  const breakRetest = isBreakRetest(daily, zone, direction);
+  // At an AOI → directional. type encodes the side (support = price above → BUY).
+  const direction = active.type === 'support' ? 'BUY' : 'SELL';
+
+  const breakRetest = isBreakRetest(daily, active, direction);
   const lastH4 = h4?.length ? h4[h4.length - 1] : daily[daily.length - 1];
   const rej = rejectionDirection(lastH4);
   const rejectionMatches =
     (direction === 'BUY' && rej === 'BULLISH') ||
     (direction === 'SELL' && rej === 'BEARISH');
 
-  const psych = checkPsychConfluence(zone.mid, pair, PSYCH_TOLERANCE);
-
   // Score
   let score = 0;
-  if (zone.touches >= 6) score += 40;
-  else if (zone.touches >= 4) score += 30;
+  const ws = active.weighted_score;
+  if (ws >= 6) score += 40;
+  else if (ws >= 4) score += 30;
   else score += 20;
-  if (psych.confluent) score += 25;
-  // Alignment bonus
+  if (active.is_psychological) score += 25;
   if (alignment.strength === 'STRONG' && alignment.direction === direction) score += 20;
   else if (alignment.strength === 'WEAK' && alignment.direction === direction) score += 10;
-  // 4H confirms
   if (h4Structure === (direction === 'BUY' ? 'BULLISH' : 'BEARISH')) score += 10;
   if (breakRetest) score += 15;
   if (rejectionMatches) score += 15;
-  if (distance <= 0.001) score += 10;
-  else if (distance <= 0.003) score += 5;
+  if (activePips <= 2) score += 10;
+  else if (activePips <= AT_AOI_PIPS) score += 5;
 
-  // Apply floors — strong zones near price always reach actionable
-  score = applyScoreFloors(score, zone, distance);
+  // Floors — a strong AOI right at price always reaches actionable.
+  let floor = 0;
+  if (ws >= 3 && activePips <= 2) floor = Math.max(floor, 40);
+  if (ws >= 5 && activePips <= 5) floor = Math.max(floor, 45);
+  if (ws >= 8 && activePips <= AT_AOI_PIPS) floor = Math.max(floor, 55);
+  score = Math.max(score, floor);
   score = Math.min(100, Math.round(score));
 
-  const reason = determineReason(score, true, breakRetest, rejectionMatches, alignment.strength);
+  const reason = determineReason(score, breakRetest, rejectionMatches, alignment.strength);
   logSummary(pair, weeklyStructure, dailyStructure, h4Structure, score, reason);
 
   const trigger = triggerLabel(breakRetest, rejectionMatches);
-  const zoneDescribed = {
-    low: round(zone.low, pair),
-    high: round(zone.high, pair),
-    mid: round(zone.mid, pair),
-    touches: zone.touches
-  };
+  const psychLevel = active.psych_level ?? null;
 
-  // Band → display
   if (score < 25) {
     return {
-      ...baseInfo,
-      direction: 'NONE',
-      score,
-      actionable: false,
-      entry: null,
-      sl: null,
-      tp: null,
-      rr: null,
-      slPips: null,
-      tpPips: null,
-      zone: zoneDescribed,
-      trigger,
-      psychLevel: psych.confluent ? round(psych.level, pair) : null,
-      psychConfluence: psych.confluent,
-      tpCappedBy: null,
-      reason
+      ...emptySignal(reason),
+      zone: zoneOut,
+      psychLevel,
+      psychConfluence: active.is_psychological,
+      aoiPips: Math.round(activePips)
     };
   }
 
   if (score < 40) {
-    // WATCH band
     return {
       ...baseInfo,
       direction: 'WATCH',
       score,
       actionable: false,
-      entry: round(zone.mid, pair),
+      entry: round(active.midpoint, pair),
       sl: null,
       tp: null,
       rr: null,
       slPips: null,
       tpPips: null,
-      zone: zoneDescribed,
+      zone: zoneOut,
       trigger,
-      psychLevel: psych.confluent ? round(psych.level, pair) : null,
-      psychConfluence: psych.confluent,
+      psychLevel,
+      psychConfluence: active.is_psychological,
       tpCappedBy: null,
-      watchDistance: Number((distance * 100).toFixed(2)),
+      insideAOI: false,
+      atAOI: true,
+      aoiPips: Math.round(activePips),
+      watchDistance: Math.round(activePips),
       reason
     };
   }
@@ -423,10 +425,12 @@ export function computeSignal(pair, weekly, daily, h4, sr) {
   // Actionable: 40-59 → 1:2, 60-79 → 1:3, 80+ → 1:4
   const rr = score >= 80 ? 4 : score >= 60 ? 3 : 2;
   const tier = score >= 80 ? 'ELITE' : score >= 60 ? 'STRONG' : 'SIGNAL';
-  const entry = zone.mid;
-  const sl = placeStopLoss(direction, zone, daily, pair);
+  const entry = active.midpoint;
+  const sl =
+    direction === 'BUY'
+      ? active.bottom - SL_BUFFER_PIPS * pip
+      : active.top + SL_BUFFER_PIPS * pip;
   const { tp, cappedBy } = placeTakeProfit(direction, entry, sl, rr, sr, pair);
-  const pip = pipSize(pair);
   const slPips = Math.round(Math.abs(entry - sl) / pip);
   const tpPips = Math.round(Math.abs(tp - entry) / pip);
 
@@ -442,14 +446,17 @@ export function computeSignal(pair, weekly, daily, h4, sr) {
     rr,
     slPips,
     tpPips,
-    zone: zoneDescribed,
+    zone: zoneOut,
     trigger,
-    psychLevel: psych.confluent ? round(psych.level, pair) : null,
-    psychConfluence: psych.confluent,
+    psychLevel,
+    psychConfluence: active.is_psychological,
     tpCappedBy: cappedBy
-      ? { mid: round(cappedBy.mid, pair), touches: cappedBy.touches }
+      ? { mid: round(cappedBy.midpoint, pair), touches: cappedBy.weighted_score }
       : null,
     alignmentStrength: alignment.strength,
+    insideAOI: false,
+    atAOI: true,
+    aoiPips: Math.round(activePips),
     reason
   };
 }

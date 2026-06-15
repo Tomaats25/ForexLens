@@ -61,7 +61,9 @@ export default function SignalCard({ signal, onClick, onOpenChart, onOpenCheckli
 
   // Top-right tier badge
   let badge;
-  if (!signal.actionable) {
+  if (signal.insideAOI) {
+    badge = { label: 'Inside AOI', key: 'inside' };
+  } else if (!signal.actionable) {
     badge = isWatch
       ? { label: 'Watch', key: 'watch' }
       : { label: 'No Setup', key: 'none' };
@@ -89,8 +91,24 @@ export default function SignalCard({ signal, onClick, onOpenChart, onOpenCheckli
   let cardClass = 'signal-card';
   if (signal.actionable && tier && !isNoTrade) cardClass += ` tier-${tier.tier}`;
   if (isWatch) cardClass += ' watch-card';
+  if (signal.insideAOI) cardClass += ' inside-aoi-card';
 
   const showTradeGrid = signal.actionable && !isNoTrade;
+
+  const zone = signal.zone;
+  const aoiLine = zone ? (
+    <div className="card-aoi">
+      <span className="aoi-label">AOI</span>
+      <span className="aoi-range">
+        {zone.bottom} — {zone.top}
+      </span>
+      <span className="aoi-meta">
+        {zone.pips_wide} pips · {zone.weighted_score} touches
+        {zone.timeframe === 'both' ? ' · W+D' : zone.timeframe === 'weekly' ? ' · W' : ' · D'}
+      </span>
+      {zone.is_psychological && <span className="aoi-psych">PSYCH</span>}
+    </div>
+  ) : null;
 
   const mtfRow = (
     <div className="card-mtf">
@@ -125,6 +143,8 @@ export default function SignalCard({ signal, onClick, onOpenChart, onOpenCheckli
         </div>
         <span className={`tier-badge tier-badge-${badge.key}`}>{badge.label}</span>
       </div>
+
+      {aoiLine}
 
       {showTradeGrid && (
         <>

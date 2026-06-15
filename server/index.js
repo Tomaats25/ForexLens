@@ -101,7 +101,7 @@ app.get('/api/scan', async (_req, res) => {
         }
         if (!weekly.length || !daily.length) continue;
 
-        const sr = detectSR(weekly, daily);
+        const sr = detectSR(weekly, daily, pair);
         const base = pair.slice(0, 3);
         const quote = pair.slice(3);
         const signal = computeSignal(pair, weekly, daily, h4, sr);
@@ -153,7 +153,7 @@ app.get('/api/pair/:sym', async (req, res) => {
     } catch (e) {
       console.warn(`4H fetch failed for ${sym}: ${e.message}`);
     }
-    const sr = detectSR(weekly, daily);
+    const sr = detectSR(weekly, daily, sym);
 
     const base = sym.slice(0, 3);
     const quote = sym.slice(3);
@@ -237,7 +237,7 @@ app.get('/api/chart/:sym/:tf', async (req, res) => {
     // Zones always come from weekly+daily (cache hits after any scan)
     const weekly = tf.interval === '1week' ? candlesFull : await getOHLC(sym, '1week', 52);
     const daily = tf.interval === '1day' ? candlesFull : await getOHLC(sym, '1day', 90);
-    const srAll = detectSR(weekly, daily);
+    const srAll = detectSR(weekly, daily, sym);
     const sr = {
       support: srAll.support.filter((z) => z.touches >= 3),
       resistance: srAll.resistance.filter((z) => z.touches >= 3)
