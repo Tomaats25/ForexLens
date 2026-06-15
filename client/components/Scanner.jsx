@@ -260,8 +260,8 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
             <div className="progress-fill" style={{ width: `${progressPct(progress)}%` }} />
           </div>
           <p className="muted">
-            3 batch API calls (one per timeframe). Cached timeframes are skipped — fresh
-            scans finish in seconds.
+            Fetching from Yahoo Finance — all pairs in parallel, no rate limits. Cached
+            timeframes are skipped, so fresh scans finish in seconds.
           </p>
           {warnings.length > 0 && (
             <div className="progress-warnings">
