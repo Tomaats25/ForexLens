@@ -4,7 +4,13 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDB } from './db.js';
-import { getOHLC, isCached } from './data.js';
+import {
+  getOHLC,
+  prefetchBatch,
+  BATCH_PLAN,
+  intervalNeedsFetch,
+  getCacheStatus
+} from './data.js';
 import { detectSR } from './sr.js';
 import { computeSignal, computeEMASeries } from './signals.js';
 import { getNews, getCurrencySentiment, summarizeArticles } from './news.js';
@@ -30,21 +36,12 @@ app.use(express.json());
 
 initDB();
 
-// ETA = uncached Twelve Data calls remaining × throttle interval.
-// Cache-aware, so it self-corrects as the scan fills the cache.
-const SECONDS_PER_CALL = 8;
-function estimateRemainingSeconds(fromIndex) {
-  let calls = 0;
-  for (let j = fromIndex; j < PAIRS.length; j++) {
-    const p = PAIRS[j];
-    if (!isCached(p, '1week')) calls++;
-    if (!isCached(p, '1day')) calls++;
-    if (!isCached(p, '4h')) calls++;
-  }
-  return calls * SECONDS_PER_CALL;
-}
+// Cache freshness for the UI — lets the client auto-load instantly when fresh.
+app.get('/api/cache-status', (_req, res) => {
+  res.json(getCacheStatus(PAIRS));
+});
 
-app.get('/api/scan', async (_req, res) => {
+app.get('/api/scan', async (req, res) => {
   // Server-Sent Events: stream progress while the scan runs.
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -52,11 +49,37 @@ app.get('/api/scan', async (_req, res) => {
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
 
+  const force = req.query.force === '1' || req.query.force === 'true';
+
   const send = (event) => {
     res.write(`data: ${JSON.stringify(event)}\n\n`);
   };
 
   try {
+    // Stage 1 — batch OHLC fetch: one call per interval for all stale symbols.
+    const needed = BATCH_PLAN.filter((p) => intervalNeedsFetch(PAIRS, p.interval, force));
+    let fetchStep = 0;
+    for (const { interval, count } of BATCH_PLAN) {
+      if (!intervalNeedsFetch(PAIRS, interval, force)) continue;
+      fetchStep += 1;
+      send({
+        type: 'progress',
+        stage: 'fetch',
+        current: fetchStep,
+        total: needed.length,
+        label: `${interval} (16 pairs)`,
+        etaSeconds: (needed.length - fetchStep + 1) * 8
+      });
+      const r = await prefetchBatch(PAIRS, interval, count, { force });
+      if (!r.ok) {
+        send({
+          type: 'warning',
+          pair: interval,
+          message: `Batch ${interval} failed (${r.error}) — falling back to per-pair fetch`
+        });
+      }
+    }
+
     const sentiments = {};
     const newsSummaries = {};
     for (let i = 0; i < CURRENCIES.length; i++) {
@@ -66,8 +89,7 @@ app.get('/api/scan', async (_req, res) => {
         stage: 'news',
         current: i + 1,
         total: CURRENCIES.length,
-        label: cur,
-        etaSeconds: estimateRemainingSeconds(0)
+        label: cur
       });
       sentiments[cur] = await getCurrencySentiment(cur);
       try {
@@ -86,8 +108,7 @@ app.get('/api/scan', async (_req, res) => {
         stage: 'pairs',
         current: i + 1,
         total: PAIRS.length,
-        label: pair,
-        etaSeconds: estimateRemainingSeconds(i)
+        label: pair
       });
 
       try {

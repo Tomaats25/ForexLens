@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import SignalCard from './SignalCard.jsx';
 
-const STAGE_WEIGHTS = { news: 0.1, pairs: 0.9 };
+const STAGE_WEIGHTS = { fetch: 0.6, news: 0.1, pairs: 0.3 };
 
 const FILTERS = [
   { id: 'all', label: 'All Pairs' },
@@ -19,22 +19,42 @@ function formatEta(seconds) {
   return ` ~${Math.round(seconds)}s remaining`;
 }
 
+function formatAgo(ts) {
+  if (!ts) return '';
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
 function progressText(progress) {
   if (!progress) return 'Starting scan…';
-  if (progress.stage === 'news') {
-    return `Loading news sentiment: ${progress.label} (${progress.current}/${progress.total})${formatEta(progress.etaSeconds)}`;
+  if (progress.stage === 'fetch') {
+    return `Fetching ${progress.label}… (${progress.current}/${progress.total})${formatEta(progress.etaSeconds)}`;
   }
-  return `Scanning ${progress.label}… (${progress.current}/${progress.total})${formatEta(progress.etaSeconds)}`;
+  if (progress.stage === 'news') {
+    return `Loading news sentiment: ${progress.label} (${progress.current}/${progress.total})`;
+  }
+  return `Analyzing ${progress.label}… (${progress.current}/${progress.total})`;
 }
 
 function progressPct(progress) {
   if (!progress) return 0;
-  if (progress.stage === 'news') {
-    return (progress.current / progress.total) * STAGE_WEIGHTS.news * 100;
+  if (progress.stage === 'fetch') {
+    return (progress.current / progress.total) * STAGE_WEIGHTS.fetch * 100;
   }
-  const newsPart = STAGE_WEIGHTS.news;
-  const pairsPart = (progress.current / progress.total) * STAGE_WEIGHTS.pairs;
-  return (newsPart + pairsPart) * 100;
+  if (progress.stage === 'news') {
+    return (STAGE_WEIGHTS.fetch + (progress.current / progress.total) * STAGE_WEIGHTS.news) * 100;
+  }
+  return (
+    (STAGE_WEIGHTS.fetch +
+      STAGE_WEIGHTS.news +
+      (progress.current / progress.total) * STAGE_WEIGHTS.pairs) *
+    100
+  );
 }
 
 function RefreshIcon({ spinning }) {
@@ -86,24 +106,36 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
   const [progress, setProgress] = useState(null);
   const [warnings, setWarnings] = useState([]);
   const [filter, setFilter] = useState('all');
+  const [cacheStatus, setCacheStatus] = useState(null);
+  const [justUpdated, setJustUpdated] = useState(false);
   const esRef = useRef(null);
+  const autoTriedRef = useRef(false);
 
-  useEffect(() => {
-    return () => {
-      if (esRef.current) esRef.current.close();
-    };
-  }, []);
+  async function refreshCacheStatus() {
+    try {
+      const r = await fetch('/api/cache-status');
+      if (r.ok) {
+        const s = await r.json();
+        setCacheStatus(s);
+        return s;
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
 
-  function scan() {
+  function scan(force = false) {
     setLoading(true);
     setError(null);
     setProgress(null);
     setResults(null);
     setWarnings([]);
+    setJustUpdated(false);
 
     if (esRef.current) esRef.current.close();
 
-    const es = new EventSource('/api/scan');
+    const es = new EventSource(`/api/scan${force ? '?force=1' : ''}`);
     esRef.current = es;
     let finished = false;
 
@@ -118,12 +150,14 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
           finished = true;
           setResults({
             scannedAt: event.scannedAt,
-            // Tag each result with the scan date so checklist records can store it
             results: event.results.map((r) => ({ ...r, scannedAt: event.scannedAt }))
           });
           onScanMeta?.({ scannedAt: event.scannedAt, count: event.results.length });
           setLoading(false);
           setProgress(null);
+          setJustUpdated(true);
+          setTimeout(() => setJustUpdated(false), 4000);
+          refreshCacheStatus();
           es.close();
         } else if (event.type === 'error') {
           finished = true;
@@ -147,7 +181,35 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
     };
   }
 
-  // Colored tier breakdown across the scanned pairs (tiers come from saved checklists)
+  // On first load: check cache. Fresh → auto-scan (instant). Otherwise prompt.
+  useEffect(() => {
+    if (autoTriedRef.current) return;
+    autoTriedRef.current = true;
+    refreshCacheStatus().then((s) => {
+      if (s && s.fresh) scan(false);
+    });
+    return () => {
+      if (esRef.current) esRef.current.close();
+    };
+  }, []);
+
+  // Cache status line next to the button.
+  let statusNode = null;
+  if (loading) {
+    statusNode = <span className="cache-status refreshing">Refreshing data…</span>;
+  } else if (justUpdated) {
+    statusNode = <span className="cache-status fresh">Data updated</span>;
+  } else if (cacheStatus?.fresh) {
+    statusNode = (
+      <span className="cache-status fresh">
+        Data fresh — last fetched {formatAgo(cacheStatus.oldestFetchedAt)}
+      </span>
+    );
+  } else if (cacheStatus?.hasData) {
+    statusNode = <span className="cache-status stale">Data is stale — scan to refresh</span>;
+  }
+
+  // Colored tier breakdown across the scanned pairs.
   let summary = null;
   if (results) {
     const counts = { A: 0, B: 0, C: 0, 'NO TRADE': 0, unscored: 0 };
@@ -161,32 +223,35 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
 
   const groups = results
     ? [
-        {
-          id: 'major',
-          title: 'MAJORS',
-          items: results.results.filter((r) => r.category === 'major')
-        },
-        {
-          id: 'cross',
-          title: 'CROSSES',
-          items: results.results.filter((r) => r.category !== 'major')
-        }
+        { id: 'major', title: 'MAJORS', items: results.results.filter((r) => r.category === 'major') },
+        { id: 'cross', title: 'CROSSES', items: results.results.filter((r) => r.category !== 'major') }
       ].filter((g) => g.items.length > 0 && (filter === 'all' || filter === g.id))
     : [];
 
-  // Continuous index across groups so the fade-in stagger flows top to bottom
   let cardIndex = 0;
 
   return (
     <div className="scanner">
       <button
         className={`scan-btn ${loading ? 'scanning' : ''}`}
-        onClick={scan}
+        onClick={() => scan(false)}
         disabled={loading}
       >
         <RefreshIcon spinning={loading} />
         {loading ? 'Scanning…' : 'Scan This Week'}
       </button>
+
+      <div className="scan-status-row">
+        {statusNode}
+        <button
+          type="button"
+          className="force-refresh"
+          onClick={() => scan(true)}
+          disabled={loading}
+        >
+          Force Refresh
+        </button>
+      </div>
 
       {loading && (
         <div className="scan-progress">
@@ -195,8 +260,8 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
             <div className="progress-fill" style={{ width: `${progressPct(progress)}%` }} />
           </div>
           <p className="muted">
-            Rate-limited to one API call per 8s (Twelve Data free tier). Cold scans take a
-            few minutes; cached re-scans finish in seconds.
+            3 batch API calls (one per timeframe). Cached timeframes are skipped — fresh
+            scans finish in seconds.
           </p>
           {warnings.length > 0 && (
             <div className="progress-warnings">
@@ -225,15 +290,9 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
               <span className="summary-count">Scanned {summary.total} pairs</span>
               <span className="summary-sep">—</span>
               <span className="summary-tiers">
-                {summary.counts.A > 0 && (
-                  <span className="sum-a">{summary.counts.A} A tier</span>
-                )}
-                {summary.counts.B > 0 && (
-                  <span className="sum-b">{summary.counts.B} B tier</span>
-                )}
-                {summary.counts.C > 0 && (
-                  <span className="sum-c">{summary.counts.C} C tier</span>
-                )}
+                {summary.counts.A > 0 && <span className="sum-a">{summary.counts.A} A tier</span>}
+                {summary.counts.B > 0 && <span className="sum-b">{summary.counts.B} B tier</span>}
+                {summary.counts.C > 0 && <span className="sum-c">{summary.counts.C} C tier</span>}
                 {summary.counts['NO TRADE'] > 0 && (
                   <span className="sum-notrade">{summary.counts['NO TRADE']} no trade</span>
                 )}
@@ -284,11 +343,7 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
                   {g.items.map((r) => {
                     const delay = cardIndex++ * 80;
                     return (
-                      <div
-                        key={r.pair}
-                        className="card-fade-in"
-                        style={{ animationDelay: `${delay}ms` }}
-                      >
+                      <div key={r.pair} className="card-fade-in" style={{ animationDelay: `${delay}ms` }}>
                         <SignalCard
                           signal={r}
                           onClick={() => onOpenChart?.(r.pair, r)}
@@ -308,7 +363,11 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
 
       {!results && !loading && !error && (
         <div className="welcome">
-          <p className="welcome-title">Scan the market for this week's best setups</p>
+          <p className="welcome-title">
+            {cacheStatus?.hasData
+              ? 'Click Scan to refresh this week’s data'
+              : 'Click Scan to load this week’s data'}
+          </p>
           <p className="muted">
             16 pairs (7 majors + 9 crosses) · S/R detection · MTF trend · Checklist scoring
           </p>

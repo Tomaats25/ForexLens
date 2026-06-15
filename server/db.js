@@ -24,6 +24,12 @@ export function setCachedOHLC(pair, interval, data) {
   ohlcCache.set(key, { data, fetchedAt: Date.now() });
 }
 
+// When a (pair, interval) was last fetched, or null if never. Used for cache status.
+export function getOHLCFetchedAt(pair, interval) {
+  const entry = ohlcCache.get(`${pair}:${interval}`);
+  return entry ? entry.fetchedAt : null;
+}
+
 export function getCachedNews(currency, maxAgeMs) {
   const entry = newsCache.get(currency);
   if (!entry) return null;

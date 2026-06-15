@@ -206,6 +206,65 @@ body {
   }
 }
 
+/* ── Cache status row ────────────────────────────────── */
+.scan-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  min-height: 18px;
+}
+
+.cache-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+}
+
+.cache-status::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.cache-status.fresh {
+  color: var(--buy);
+}
+
+.cache-status.stale {
+  color: var(--text-sec);
+}
+
+.cache-status.refreshing {
+  color: var(--accent);
+}
+
+.force-refresh {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-sec);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  padding: 0;
+}
+
+.force-refresh:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.force-refresh:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* ── Scan progress ───────────────────────────────────── */
 .scan-progress {
   margin-top: 16px;
