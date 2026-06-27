@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import { initDB } from './db.js';
 import {
   getOHLC,
-  prefetchInterval,
+  prefetchBatch,
   BATCH_PLAN,
   intervalNeedsFetch,
   getCacheStatus
@@ -56,7 +56,7 @@ app.get('/api/scan', async (req, res) => {
   };
 
   try {
-    // Stage 1 — OHLC fetch from Yahoo: all 16 pairs in parallel, one interval at a time.
+    // Stage 1 — batch OHLC fetch: one Twelve Data call per interval for all stale symbols.
     const needed = BATCH_PLAN.filter((p) => intervalNeedsFetch(PAIRS, p.interval, force));
     let fetchStep = 0;
     for (const { interval, count } of BATCH_PLAN) {
@@ -68,14 +68,14 @@ app.get('/api/scan', async (req, res) => {
         current: fetchStep,
         total: needed.length,
         label: `${interval} (16 pairs)`,
-        etaSeconds: (needed.length - fetchStep + 1) * 3
+        etaSeconds: (needed.length - fetchStep + 1) * 8
       });
-      const r = await prefetchInterval(PAIRS, interval, count, { force });
-      if (r.failed.length) {
+      const r = await prefetchBatch(PAIRS, interval, count, { force });
+      if (!r.ok) {
         send({
           type: 'warning',
           pair: interval,
-          message: `${interval}: ${r.failed.length} pair(s) failed (${r.failed.join(', ')})`
+          message: `Batch ${interval} failed (${r.error}) — falling back to per-pair fetch`
         });
       }
     }
