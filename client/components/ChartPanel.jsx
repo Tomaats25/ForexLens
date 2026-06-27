@@ -237,7 +237,7 @@ export default function ChartPanel({ pair, signal, savedChecklist, onClose }) {
       });
     }
 
-    // 4. EMA 20 on top
+    // 4. EMA 50 on top
     if (data.ema?.length) {
       const ema = chart.addLineSeries({
         color: '#1f6feb',
@@ -328,7 +328,7 @@ export default function ChartPanel({ pair, signal, savedChecklist, onClose }) {
             className={`ema-toggle ${showEma ? 'active' : ''}`}
             onClick={() => setShowEma((v) => !v)}
           >
-            EMA 20
+            EMA 50
           </button>
         </div>
       </div>

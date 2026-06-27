@@ -248,7 +248,7 @@ app.get('/api/chart/:sym/:tf', async (req, res) => {
       resistance: srAll.resistance.filter((z) => z.touches >= 3)
     };
 
-    const ema = computeEMASeries(candles, 20);
+    const ema = computeEMASeries(candles, 50);
     const currentPrice = candles.length ? candles[candles.length - 1].close : null;
     let psychLevels = [];
     if (candles.length) {
