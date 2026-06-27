@@ -71,6 +71,17 @@ Open http://localhost:3000
 | GET    | `/api/scan`       | Runs a full scan, returns ranked signals   |
 | GET    | `/api/pair/:sym`  | OHLC + S/R + signal for one pair           |
 | GET    | `/api/chart/:sym/:tf` | Candles + S/R zones + EMA + psych levels (tf: weekly / daily / 4h) |
+| GET    | `/api/status`     | Current week's persisted scan + live per-zone status (Tier 2) |
+| GET    | `/api/cache-status` | OHLC cache freshness                                     |
+
+## Weekly workflow (two tiers)
+
+- **Tier 1 — full scan (run from your PC, end of week):** "Run Full Scan" pulls full history, computes AOIs/trend/grades/SL/TP/RR, and **persists the result server-side keyed by ISO week** (`scan_2026-W26.json`).
+- **Tier 2 — status check (any device, e.g. phone):** on load, the page reads the persisted scan instantly and overlays a lightweight live status per zone — `pending` / `touched` / `triggered` / `invalidated` — without re-scanning. Frozen data (AOIs, grades, SL/TP/RR) never changes; only status does.
+
+### Server-side persistence (Railway)
+
+Scans are written as JSON under `DATA_DIR` (default `server/data`). **To survive redeploys/restarts on Railway you must attach a Volume** and set `DATA_DIR` to its mount path (e.g. `/data`). Without a volume the file lives on the container's ephemeral disk: cross-*device* reads still work (same running container), but the scan is lost on the next redeploy. Assumes a single instance (default on Railway hobby).
 | GET    | `/api/news/:cur`  | Latest news + sentiment for a currency     |
 
 ## How it works

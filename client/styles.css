@@ -265,6 +265,71 @@ body {
   cursor: default;
 }
 
+.scan-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.scan-actions .force-refresh {
+  margin-left: 0;
+}
+
+/* One-trade-at-a-time rule */
+.one-trade-banner {
+  margin: 20px 0 16px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: rgba(79, 142, 247, 0.08);
+  border: 1px solid rgba(79, 142, 247, 0.25);
+  color: var(--text-label);
+  font-size: 13px;
+}
+
+/* Live status badge on a card */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.status-pending {
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--text-label);
+}
+.status-touched {
+  background: rgba(59, 130, 246, 0.18);
+  color: var(--blue);
+}
+.status-triggered {
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--emerald);
+}
+.status-invalidated {
+  background: rgba(239, 68, 68, 0.16);
+  color: var(--sell);
+}
+
+/* Status colors in the summary bar */
+.st-triggered {
+  color: var(--emerald);
+}
+.st-touched {
+  color: var(--blue);
+}
+.st-pending {
+  color: var(--text-label);
+}
+.st-invalidated {
+  color: var(--sell);
+}
+
 /* ── Scan progress ───────────────────────────────────── */
 .scan-progress {
   margin-top: 16px;

@@ -29,7 +29,16 @@ function formatPrice(price, pair) {
   return Number(price.toFixed(decimals));
 }
 
-export default function SignalCard({ signal, onClick, onOpenChart, onOpenChecklist, savedChecklist }) {
+export default function SignalCard({
+  signal,
+  onClick,
+  onOpenChart,
+  onOpenChecklist,
+  savedChecklist,
+  weekMode = false,
+  status = null,
+  statusLabel = null
+}) {
   const isWatch = signal.direction === 'WATCH';
   const mtf = signal.mtfAlignment || {};
 
@@ -63,6 +72,16 @@ export default function SignalCard({ signal, onClick, onOpenChart, onOpenCheckli
   let badge;
   if (signal.insideAOI) {
     badge = { label: 'Inside AOI', key: 'inside' };
+  } else if (weekMode) {
+    // Frozen server grade (device-independent), not the per-device checklist tier.
+    if (signal.actionable && signal.tier) {
+      const map = { ELITE: 'a', STRONG: 'b', SIGNAL: 'c' };
+      badge = { label: signal.tier, key: map[signal.tier] || 'c' };
+    } else if (isWatch) {
+      badge = { label: 'Watch', key: 'watch' };
+    } else {
+      badge = { label: 'No Setup', key: 'none' };
+    }
   } else if (!signal.actionable) {
     badge = isWatch
       ? { label: 'Watch', key: 'watch' }
@@ -140,6 +159,9 @@ export default function SignalCard({ signal, onClick, onOpenChart, onOpenCheckli
         <div className="card-pair">
           <span className={`status-dot ${dotClass}`} title={dotTitle} />
           <span className="pair-name">{signal.pair}</span>
+          {status && (
+            <span className={`status-badge status-${status}`}>{statusLabel || status}</span>
+          )}
         </div>
         <span className={`tier-badge tier-badge-${badge.key}`}>{badge.label}</span>
       </div>

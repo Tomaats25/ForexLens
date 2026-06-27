@@ -8,6 +8,7 @@ import { getOHLC, isCached, getCacheStatus } from './data.js';
 import { detectSR } from './sr.js';
 import { computeSignal, computeEMASeries } from './signals.js';
 import { getNews, getCurrencySentiment, summarizeArticles } from './news.js';
+import { saveScan, loadScan } from './store.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,6 +31,52 @@ app.use(express.json());
 
 initDB();
 
+// ISO-8601 week key (weeks start Monday) — matches the client's getWeekKey.
+function getWeekKey(d = new Date()) {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((date - yearStart) / 86400000 + 1) / 7);
+  return `${date.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+function pipSize(pair) {
+  return pair.includes('JPY') ? 0.01 : 0.0001;
+}
+
+// Tier-2 status of a frozen zone vs the latest candles. Frozen data never changes;
+// only this status does. Order: invalidated > triggered > touched > pending.
+function computeZoneStatus(result, recent, price) {
+  const z = result.zone;
+  if (!z) return null;
+  const long =
+    result.direction === 'BUY' || (result.direction === 'WATCH' && z.type === 'support');
+  const short =
+    result.direction === 'SELL' || (result.direction === 'WATCH' && z.type === 'resistance');
+
+  if (long) {
+    if (price < z.bottom) return 'invalidated'; // support broken — dead for the week
+    const entered = recent.some((c) => c.low <= z.top);
+    if (!entered && price > z.top) return 'pending';
+    if (entered && price > z.top) return 'triggered'; // dipped in and closed back above
+    return 'touched';
+  }
+  if (short) {
+    if (price > z.top) return 'invalidated';
+    const entered = recent.some((c) => c.high >= z.bottom);
+    if (!entered && price < z.bottom) return 'pending';
+    if (entered && price < z.bottom) return 'triggered';
+    return 'touched';
+  }
+  return price >= z.bottom && price <= z.top ? 'touched' : 'pending';
+}
+
+// Short-lived shared cache for the lightweight status so repeated phone loads
+// don't refetch. Derived data — fine to keep in memory.
+const STATUS_TTL = 10 * 60 * 1000;
+const statusCache = { week: null, computedAt: 0, data: null };
+
 // ETA for the scan: remaining uncached Twelve Data calls × the 8s throttle.
 // Self-corrects as the cache fills (cached pairs cost 0s).
 function estimateRemainingSeconds(fromIndex, force) {
@@ -46,6 +93,51 @@ function estimateRemainingSeconds(fromIndex, force) {
 // Cache freshness for the UI — lets the client auto-load instantly when fresh.
 app.get('/api/cache-status', (_req, res) => {
   res.json(getCacheStatus(PAIRS));
+});
+
+// Tier 2: load the current week's persisted scan and overlay a lightweight live
+// status per zone. Readable from any device; safe to call repeatedly on mobile.
+app.get('/api/status', async (req, res) => {
+  try {
+    const week = getWeekKey();
+    const stored = loadScan(week);
+    if (!stored) return res.json({ exists: false, week });
+
+    const refresh = req.query.refresh === '1';
+    if (
+      !refresh &&
+      statusCache.week === week &&
+      statusCache.data &&
+      Date.now() - statusCache.computedAt < STATUS_TTL
+    ) {
+      return res.json(statusCache.data);
+    }
+
+    // Only pairs with a zone need a status; that's a small set, so this stays light.
+    const results = [];
+    for (const r of stored.results) {
+      let status = null;
+      if (r.zone) {
+        try {
+          const recent = await getOHLC(r.pair, '1day', 20);
+          const price = recent.length ? recent[recent.length - 1].close : r.currentPrice;
+          status = computeZoneStatus(r, recent, price);
+        } catch (e) {
+          console.warn(`Status fetch failed for ${r.pair}: ${e.message}`);
+        }
+      }
+      results.push({ ...r, status });
+    }
+
+    const data = { exists: true, week, scannedAt: stored.scannedAt, results };
+    statusCache.week = week;
+    statusCache.computedAt = Date.now();
+    statusCache.data = data;
+    res.json(data);
+  } catch (err) {
+    console.error('Status error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/scan', async (req, res) => {
@@ -134,7 +226,18 @@ app.get('/api/scan', async (req, res) => {
       if (tier(a) !== tier(b)) return tier(b) - tier(a);
       return b.score - a.score;
     });
-    send({ type: 'done', scannedAt: new Date().toISOString(), results });
+
+    // Tier 1: persist the heavy scan server-side, keyed by ISO week, so any device
+    // can read it instantly and overlay live status without re-scanning.
+    const week = getWeekKey();
+    const payload = { week, scannedAt: new Date().toISOString(), results };
+    try {
+      saveScan(week, payload);
+      statusCache.week = null; // invalidate stale status cache
+    } catch (e) {
+      console.error('Failed to persist scan:', e.message);
+    }
+    send({ type: 'done', ...payload });
   } catch (err) {
     console.error('Scan error:', err);
     send({ type: 'error', message: err.message });

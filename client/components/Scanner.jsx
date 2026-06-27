@@ -9,6 +9,13 @@ const FILTERS = [
   { id: 'cross', label: 'Crosses Only' }
 ];
 
+const STATUS_LABEL = {
+  pending: 'Pending',
+  touched: 'Touched',
+  triggered: 'Triggered',
+  invalidated: 'Invalidated'
+};
+
 function formatEta(seconds) {
   if (seconds === null || seconds === undefined || seconds < 5) return '';
   if (seconds >= 120) {
@@ -19,9 +26,9 @@ function formatEta(seconds) {
   return ` ~${Math.round(seconds)}s remaining`;
 }
 
-function formatAgo(ts) {
-  if (!ts) return '';
-  const diff = Date.now() - ts;
+function formatAgo(iso) {
+  if (!iso) return '';
+  const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins}m ago`;
@@ -43,9 +50,7 @@ function progressPct(progress) {
   if (progress.stage === 'news') {
     return (progress.current / progress.total) * STAGE_WEIGHTS.news * 100;
   }
-  return (
-    (STAGE_WEIGHTS.news + (progress.current / progress.total) * STAGE_WEIGHTS.pairs) * 100
-  );
+  return (STAGE_WEIGHTS.news + (progress.current / progress.total) * STAGE_WEIGHTS.pairs) * 100;
 }
 
 function RefreshIcon({ spinning }) {
@@ -91,41 +96,47 @@ function SkeletonCard() {
 }
 
 export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists = {}, onScanMeta }) {
-  const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState(null);
-  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false); // heavy scan running
   const [progress, setProgress] = useState(null);
   const [warnings, setWarnings] = useState([]);
+  const [error, setError] = useState(null);
+  const [weekData, setWeekData] = useState(null); // { exists, week, scannedAt, results }
+  const [statusLoading, setStatusLoading] = useState(true);
   const [filter, setFilter] = useState('all');
-  const [cacheStatus, setCacheStatus] = useState(null);
-  const [justUpdated, setJustUpdated] = useState(false);
   const esRef = useRef(null);
-  const autoTriedRef = useRef(false);
 
-  async function refreshCacheStatus() {
+  // Tier 2 — load the persisted week scan + live status (any device, no re-scan).
+  async function loadStatus(refresh = false) {
+    setStatusLoading(true);
     try {
-      const r = await fetch('/api/cache-status');
-      if (r.ok) {
-        const s = await r.json();
-        setCacheStatus(s);
-        return s;
+      const r = await fetch(`/api/status${refresh ? '?refresh=1' : ''}`);
+      const data = await r.json();
+      setWeekData(data);
+      if (data.exists) {
+        onScanMeta?.({ scannedAt: data.scannedAt, count: data.results.length });
       }
     } catch {
-      /* ignore */
+      setError('Could not load this week’s scan.');
+    } finally {
+      setStatusLoading(false);
     }
-    return null;
   }
 
-  function scan(force = false) {
+  useEffect(() => {
+    loadStatus();
+    return () => {
+      if (esRef.current) esRef.current.close();
+    };
+  }, []);
+
+  // Tier 1 — heavy scan (PC). Persists server-side; we then reload the status view.
+  function runFullScan(force = false) {
     setLoading(true);
     setError(null);
     setProgress(null);
-    setResults(null);
     setWarnings([]);
-    setJustUpdated(false);
 
     if (esRef.current) esRef.current.close();
-
     const es = new EventSource(`/api/scan${force ? '?force=1' : ''}`);
     esRef.current = es;
     let finished = false;
@@ -139,17 +150,10 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
           setWarnings((w) => [...w, `${event.pair}: ${event.message}`]);
         } else if (event.type === 'done') {
           finished = true;
-          setResults({
-            scannedAt: event.scannedAt,
-            results: event.results.map((r) => ({ ...r, scannedAt: event.scannedAt }))
-          });
-          onScanMeta?.({ scannedAt: event.scannedAt, count: event.results.length });
           setLoading(false);
           setProgress(null);
-          setJustUpdated(true);
-          setTimeout(() => setJustUpdated(false), 4000);
-          refreshCacheStatus();
           es.close();
+          loadStatus(); // pull the persisted scan back with fresh statuses
         } else if (event.type === 'error') {
           finished = true;
           setError(event.message);
@@ -172,52 +176,18 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
     };
   }
 
-  // On first load: check cache. Fresh → auto-scan (instant). Otherwise prompt.
-  useEffect(() => {
-    if (autoTriedRef.current) return;
-    autoTriedRef.current = true;
-    refreshCacheStatus().then((s) => {
-      if (s && s.fresh) scan(false);
-    });
-    return () => {
-      if (esRef.current) esRef.current.close();
-    };
-  }, []);
+  const results = weekData?.exists ? weekData.results : [];
 
-  // Cache status line next to the button.
-  let statusNode = null;
-  if (loading) {
-    statusNode = <span className="cache-status refreshing">Refreshing data…</span>;
-  } else if (justUpdated) {
-    statusNode = <span className="cache-status fresh">Data updated</span>;
-  } else if (cacheStatus?.fresh) {
-    statusNode = (
-      <span className="cache-status fresh">
-        Data fresh — last fetched {formatAgo(cacheStatus.oldestFetchedAt)}
-      </span>
-    );
-  } else if (cacheStatus?.hasData) {
-    statusNode = <span className="cache-status stale">Data is stale — scan to refresh</span>;
-  }
+  // Status breakdown for the summary bar.
+  const statusCounts = results.reduce((acc, r) => {
+    if (r.status) acc[r.status] = (acc[r.status] || 0) + 1;
+    return acc;
+  }, {});
 
-  // Colored tier breakdown across the scanned pairs.
-  let summary = null;
-  if (results) {
-    const counts = { A: 0, B: 0, C: 0, 'NO TRADE': 0, unscored: 0 };
-    for (const r of results.results) {
-      const tier = savedChecklists[r.pair]?.tier;
-      if (tier && counts[tier] !== undefined) counts[tier] += 1;
-      else counts.unscored += 1;
-    }
-    summary = { total: results.results.length, counts };
-  }
-
-  const groups = results
-    ? [
-        { id: 'major', title: 'MAJORS', items: results.results.filter((r) => r.category === 'major') },
-        { id: 'cross', title: 'CROSSES', items: results.results.filter((r) => r.category !== 'major') }
-      ].filter((g) => g.items.length > 0 && (filter === 'all' || filter === g.id))
-    : [];
+  const groups = [
+    { id: 'major', title: 'MAJORS', items: results.filter((r) => r.category === 'major') },
+    { id: 'cross', title: 'CROSSES', items: results.filter((r) => r.category !== 'major') }
+  ].filter((g) => g.items.length > 0 && (filter === 'all' || filter === g.id));
 
   let cardIndex = 0;
 
@@ -225,23 +195,43 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
     <div className="scanner">
       <button
         className={`scan-btn ${loading ? 'scanning' : ''}`}
-        onClick={() => scan(false)}
+        onClick={() => runFullScan(false)}
         disabled={loading}
       >
         <RefreshIcon spinning={loading} />
-        {loading ? 'Scanning…' : 'Scan This Week'}
+        {loading ? 'Scanning…' : 'Run Full Scan'}
       </button>
 
       <div className="scan-status-row">
-        {statusNode}
-        <button
-          type="button"
-          className="force-refresh"
-          onClick={() => scan(true)}
-          disabled={loading}
-        >
-          Force Refresh
-        </button>
+        {loading ? (
+          <span className="cache-status refreshing">Running full scan…</span>
+        ) : weekData?.exists ? (
+          <span className="cache-status fresh">
+            {weekData.week} · scanned {formatAgo(weekData.scannedAt)}
+          </span>
+        ) : (
+          <span className="cache-status stale">No scan yet this week</span>
+        )}
+        <div className="scan-actions">
+          {weekData?.exists && !loading && (
+            <button
+              type="button"
+              className="force-refresh"
+              onClick={() => loadStatus(true)}
+              disabled={statusLoading}
+            >
+              {statusLoading ? 'Refreshing…' : 'Refresh Status'}
+            </button>
+          )}
+          <button
+            type="button"
+            className="force-refresh"
+            onClick={() => runFullScan(true)}
+            disabled={loading}
+          >
+            Force Rescan
+          </button>
+        </div>
       </div>
 
       {loading && (
@@ -251,8 +241,8 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
             <div className="progress-fill" style={{ width: `${progressPct(progress)}%` }} />
           </div>
           <p className="muted">
-            Fetched one pair at a time (Twelve Data free tier = 8 calls/min). A full cold
-            scan takes a few minutes; it's then cached, so the next scan is instant.
+            Heavy scan — run this from your PC at the end of the week. It fetches one pair at
+            a time (free tier = 8 calls/min) and saves the result server-side for every device.
           </p>
           {warnings.length > 0 && (
             <div className="progress-warnings">
@@ -274,21 +264,26 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
         </div>
       )}
 
-      {results && !loading && (
+      {!loading && weekData?.exists && (
         <>
-          {summary && (
+          <div className="one-trade-banner">One trade at a time — wait for your open trade to close before taking a new setup.</div>
+
+          {Object.keys(statusCounts).length > 0 && (
             <div className="summary-bar">
-              <span className="summary-count">Scanned {summary.total} pairs</span>
+              <span className="summary-count">Scanned {results.length} pairs</span>
               <span className="summary-sep">—</span>
               <span className="summary-tiers">
-                {summary.counts.A > 0 && <span className="sum-a">{summary.counts.A} A tier</span>}
-                {summary.counts.B > 0 && <span className="sum-b">{summary.counts.B} B tier</span>}
-                {summary.counts.C > 0 && <span className="sum-c">{summary.counts.C} C tier</span>}
-                {summary.counts['NO TRADE'] > 0 && (
-                  <span className="sum-notrade">{summary.counts['NO TRADE']} no trade</span>
+                {statusCounts.triggered > 0 && (
+                  <span className="st-triggered">{statusCounts.triggered} triggered</span>
                 )}
-                {summary.counts.unscored > 0 && (
-                  <span className="sum-unscored">{summary.counts.unscored} not scored</span>
+                {statusCounts.touched > 0 && (
+                  <span className="st-touched">{statusCounts.touched} touched</span>
+                )}
+                {statusCounts.pending > 0 && (
+                  <span className="st-pending">{statusCounts.pending} pending</span>
+                )}
+                {statusCounts.invalidated > 0 && (
+                  <span className="st-invalidated">{statusCounts.invalidated} invalidated</span>
                 )}
               </span>
             </div>
@@ -308,18 +303,7 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
 
           {groups.length === 0 ? (
             <div className="empty-state">
-              <div className="empty-icon" aria-hidden="true">
-                <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="11" cy="11" r="7" />
-                  <path d="M21 21l-4.3-4.3" />
-                </svg>
-              </div>
-              <p className="empty-title">No setups found this week</p>
-              <p className="empty-sub">
-                {results.results.length === 0
-                  ? 'All pairs scored below 70% — check back after the weekly candle closes.'
-                  : 'No pairs match this filter.'}
-              </p>
+              <p className="empty-title">No pairs match this filter</p>
             </div>
           ) : (
             groups.map((g) => (
@@ -332,11 +316,14 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
                 </div>
                 <div className="results">
                   {g.items.map((r) => {
-                    const delay = cardIndex++ * 80;
+                    const delay = cardIndex++ * 60;
                     return (
                       <div key={r.pair} className="card-fade-in" style={{ animationDelay: `${delay}ms` }}>
                         <SignalCard
                           signal={r}
+                          weekMode
+                          status={r.status}
+                          statusLabel={STATUS_LABEL[r.status]}
                           onClick={() => onOpenChart?.(r.pair, r)}
                           onOpenChart={() => onOpenChart?.(r.pair, r)}
                           onOpenChecklist={() => onOpenChecklist?.(r.pair, r)}
@@ -352,16 +339,25 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
         </>
       )}
 
-      {!results && !loading && !error && (
+      {!loading && weekData && !weekData.exists && (
+        <div className="empty-state">
+          <div className="empty-icon" aria-hidden="true">
+            <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 3v18h18" />
+              <path d="M7 14l4-4 3 3 5-6" />
+            </svg>
+          </div>
+          <p className="empty-title">No scan yet for {weekData.week}</p>
+          <p className="empty-sub">
+            Run the full scan from your PC at the end of the week. Once it's saved, this page
+            loads instantly on any device and tracks each setup's live status.
+          </p>
+        </div>
+      )}
+
+      {!loading && !weekData && statusLoading && (
         <div className="welcome">
-          <p className="welcome-title">
-            {cacheStatus?.hasData
-              ? 'Click Scan to refresh this week’s data'
-              : 'Click Scan to load this week’s data'}
-          </p>
-          <p className="muted">
-            16 pairs (7 majors + 9 crosses) · S/R detection · MTF trend · Checklist scoring
-          </p>
+          <p className="welcome-title">Loading this week’s scan…</p>
         </div>
       )}
     </div>
