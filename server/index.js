@@ -4,13 +4,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDB } from './db.js';
-import {
-  getOHLC,
-  prefetchBatch,
-  BATCH_PLAN,
-  intervalNeedsFetch,
-  getCacheStatus
-} from './data.js';
+import { getOHLC, isCached, getCacheStatus } from './data.js';
 import { detectSR } from './sr.js';
 import { computeSignal, computeEMASeries } from './signals.js';
 import { getNews, getCurrencySentiment, summarizeArticles } from './news.js';
@@ -36,6 +30,19 @@ app.use(express.json());
 
 initDB();
 
+// ETA for the scan: remaining uncached Twelve Data calls × the 8s throttle.
+// Self-corrects as the cache fills (cached pairs cost 0s).
+function estimateRemainingSeconds(fromIndex, force) {
+  let calls = 0;
+  for (let j = fromIndex; j < PAIRS.length; j++) {
+    const p = PAIRS[j];
+    if (force || !isCached(p, '1week')) calls += 1;
+    if (force || !isCached(p, '1day')) calls += 1;
+    if (force || !isCached(p, '4h')) calls += 1;
+  }
+  return calls * 8;
+}
+
 // Cache freshness for the UI — lets the client auto-load instantly when fresh.
 app.get('/api/cache-status', (_req, res) => {
   res.json(getCacheStatus(PAIRS));
@@ -56,30 +63,6 @@ app.get('/api/scan', async (req, res) => {
   };
 
   try {
-    // Stage 1 — batch OHLC fetch: one Twelve Data call per interval for all stale symbols.
-    const needed = BATCH_PLAN.filter((p) => intervalNeedsFetch(PAIRS, p.interval, force));
-    let fetchStep = 0;
-    for (const { interval, count } of BATCH_PLAN) {
-      if (!intervalNeedsFetch(PAIRS, interval, force)) continue;
-      fetchStep += 1;
-      send({
-        type: 'progress',
-        stage: 'fetch',
-        current: fetchStep,
-        total: needed.length,
-        label: `${interval} (16 pairs)`,
-        etaSeconds: (needed.length - fetchStep + 1) * 8
-      });
-      const r = await prefetchBatch(PAIRS, interval, count, { force });
-      if (!r.ok) {
-        send({
-          type: 'warning',
-          pair: interval,
-          message: `Batch ${interval} failed (${r.error}) — falling back to per-pair fetch`
-        });
-      }
-    }
-
     const sentiments = {};
     const newsSummaries = {};
     for (let i = 0; i < CURRENCIES.length; i++) {
@@ -108,15 +91,16 @@ app.get('/api/scan', async (req, res) => {
         stage: 'pairs',
         current: i + 1,
         total: PAIRS.length,
-        label: pair
+        label: pair,
+        etaSeconds: estimateRemainingSeconds(i, force)
       });
 
       try {
-        const weekly = await getOHLC(pair, '1week', 52);
-        const daily = await getOHLC(pair, '1day', 90);
+        const weekly = await getOHLC(pair, '1week', 52, { force });
+        const daily = await getOHLC(pair, '1day', 90, { force });
         let h4 = [];
         try {
-          h4 = await getOHLC(pair, '4h', 60);
+          h4 = await getOHLC(pair, '4h', 60, { force });
         } catch (e) {
           console.warn(`4H fetch failed for ${pair}: ${e.message}`);
         }

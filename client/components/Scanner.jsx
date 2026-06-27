@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import SignalCard from './SignalCard.jsx';
 
-const STAGE_WEIGHTS = { fetch: 0.6, news: 0.1, pairs: 0.3 };
+const STAGE_WEIGHTS = { news: 0.12, pairs: 0.88 };
 
 const FILTERS = [
   { id: 'all', label: 'All Pairs' },
@@ -32,28 +32,19 @@ function formatAgo(ts) {
 
 function progressText(progress) {
   if (!progress) return 'Starting scan…';
-  if (progress.stage === 'fetch') {
-    return `Fetching ${progress.label}… (${progress.current}/${progress.total})${formatEta(progress.etaSeconds)}`;
-  }
   if (progress.stage === 'news') {
     return `Loading news sentiment: ${progress.label} (${progress.current}/${progress.total})`;
   }
-  return `Analyzing ${progress.label}… (${progress.current}/${progress.total})`;
+  return `Analyzing ${progress.label}… (${progress.current}/${progress.total})${formatEta(progress.etaSeconds)}`;
 }
 
 function progressPct(progress) {
   if (!progress) return 0;
-  if (progress.stage === 'fetch') {
-    return (progress.current / progress.total) * STAGE_WEIGHTS.fetch * 100;
-  }
   if (progress.stage === 'news') {
-    return (STAGE_WEIGHTS.fetch + (progress.current / progress.total) * STAGE_WEIGHTS.news) * 100;
+    return (progress.current / progress.total) * STAGE_WEIGHTS.news * 100;
   }
   return (
-    (STAGE_WEIGHTS.fetch +
-      STAGE_WEIGHTS.news +
-      (progress.current / progress.total) * STAGE_WEIGHTS.pairs) *
-    100
+    (STAGE_WEIGHTS.news + (progress.current / progress.total) * STAGE_WEIGHTS.pairs) * 100
   );
 }
 
@@ -260,8 +251,8 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
             <div className="progress-fill" style={{ width: `${progressPct(progress)}%` }} />
           </div>
           <p className="muted">
-            3 batch API calls (one per timeframe), throttled for Twelve Data's free tier.
-            Cached timeframes are skipped, so fresh scans finish in seconds.
+            Fetched one pair at a time (Twelve Data free tier = 8 calls/min). A full cold
+            scan takes a few minutes; it's then cached, so the next scan is instant.
           </p>
           {warnings.length > 0 && (
             <div className="progress-warnings">

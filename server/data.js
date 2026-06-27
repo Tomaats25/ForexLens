@@ -46,11 +46,13 @@ export function isCached(pair, interval) {
   return getCachedOHLC(pair, interval, ttlFor(interval)) !== null;
 }
 
-// Single-symbol fetch — used by /api/pair, /api/chart, and as the per-pair
-// fallback when a batch couldn't fill a symbol.
-export async function getOHLC(pair, interval, count) {
-  const cached = getCachedOHLC(pair, interval, ttlFor(interval));
-  if (cached) return cached;
+// Single-symbol fetch (1 credit). The scan fetches per-pair with the 8s throttle,
+// which is what actually fits Twelve Data's free tier (8 credits/min).
+export async function getOHLC(pair, interval, count, { force = false } = {}) {
+  if (!force) {
+    const cached = getCachedOHLC(pair, interval, ttlFor(interval));
+    if (cached) return cached;
+  }
 
   const apiKey = process.env.TWELVE_DATA_KEY;
   if (!apiKey) throw new Error('TWELVE_DATA_KEY not set in .env');
