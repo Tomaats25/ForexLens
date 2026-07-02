@@ -181,6 +181,52 @@ function triggerLabel(breakRetest, rejection) {
   return null;
 }
 
+// Direction for the best-entry suggestion. Support AOI (price above) → BUY,
+// resistance → SELL. Inside a zone, fall back to the trend.
+function suggestionDirection(zone, alignment, dailyStructure) {
+  if (zone.type === 'support') return 'BUY';
+  if (zone.type === 'resistance') return 'SELL';
+  const trend =
+    alignment.direction || (dailyStructure !== 'UNCLEAR' ? dailyStructure : null);
+  if (trend === 'BULLISH') return 'BUY';
+  if (trend === 'BEARISH') return 'SELL';
+  return null;
+}
+
+// Best-entry suggestion (the "RR box") — attached to any result with a zone so the
+// UI can always answer: where is the best entry, which way, and at what RR.
+function buildEntrySuggestion(pair, zone, direction, sr, opts = {}) {
+  if (!zone || !direction) return null;
+  const pip = pipSize(pair);
+  const entry = zone.midpoint;
+  const sl =
+    direction === 'BUY'
+      ? zone.bottom - SL_BUFFER_PIPS * pip
+      : zone.top + SL_BUFFER_PIPS * pip;
+  const rr = opts.rr ?? (zone.weighted_score >= 6 ? 3 : 2);
+  const { tp, cappedBy } = placeTakeProfit(direction, entry, sl, rr, sr, pair);
+  const riskPips = Math.round(Math.abs(entry - sl) / pip);
+  const rewardPips = Math.round(Math.abs(tp - entry) / pip);
+  return {
+    direction,
+    entry: round(entry, pair),
+    // Best-entry range: from the zone edge price approaches first to the midpoint.
+    entryZone: {
+      from: round(direction === 'BUY' ? zone.top : zone.bottom, pair),
+      to: round(entry, pair)
+    },
+    sl: round(sl, pair),
+    tp: round(tp, pair),
+    rr,
+    riskPips,
+    rewardPips,
+    actualRR: riskPips > 0 ? Number((rewardPips / riskPips).toFixed(2)) : null,
+    tpCapped: !!cappedBy,
+    confidence: opts.confidence || 'low',
+    note: opts.note || null
+  };
+}
+
 function determineReason(score, hasBR, hasRejection, alignmentStrength) {
   if (score >= 80) return 'elite';
   if (score >= 60) return 'strong';
@@ -278,6 +324,21 @@ export function computeSignal(pair, weekly, daily, h4, sr) {
     insideAOI: false,
     atAOI: false,
     aoiPips: active ? Math.round(activePips) : null,
+    entrySuggestion: active
+      ? buildEntrySuggestion(
+          pair,
+          active,
+          suggestionDirection(active, alignment, dailyStructure),
+          sr,
+          {
+            note:
+              activePips <= AT_AOI_PIPS
+                ? 'At the AOI — waiting for a valid trigger'
+                : `Price is ${Math.round(activePips)}p from the AOI — set a limit order at the zone`,
+            confidence: 'low'
+          }
+        )
+      : null,
     reason
   });
 
@@ -313,6 +374,16 @@ export function computeSignal(pair, weekly, daily, h4, sr) {
       atAOI: false,
       aoiPips: 0,
       watchDistance: 0,
+      entrySuggestion: buildEntrySuggestion(
+        pair,
+        active,
+        suggestionDirection(active, alignment, dailyStructure),
+        sr,
+        {
+          note: 'Price is inside the AOI — enter on a rejection in the trend direction',
+          confidence: 'medium'
+        }
+      ),
       reason: 'inside_aoi'
     };
   }
@@ -341,6 +412,16 @@ export function computeSignal(pair, weekly, daily, h4, sr) {
         atAOI: false,
         aoiPips: Math.round(activePips),
         watchDistance: Math.round(activePips),
+        entrySuggestion: buildEntrySuggestion(
+          pair,
+          active,
+          suggestionDirection(active, alignment, dailyStructure),
+          sr,
+          {
+            note: `Strong AOI ${Math.round(activePips)}p away — set a limit order at the midpoint`,
+            confidence: 'medium'
+          }
+        ),
         reason: 'near_strong_aoi'
       };
     }
@@ -418,6 +499,10 @@ export function computeSignal(pair, weekly, daily, h4, sr) {
       atAOI: true,
       aoiPips: Math.round(activePips),
       watchDistance: Math.round(activePips),
+      entrySuggestion: buildEntrySuggestion(pair, active, direction, sr, {
+        note: 'At the AOI — trigger forming; place a limit order at the midpoint',
+        confidence: 'medium'
+      }),
       reason
     };
   }
@@ -457,6 +542,11 @@ export function computeSignal(pair, weekly, daily, h4, sr) {
     insideAOI: false,
     atAOI: true,
     aoiPips: Math.round(activePips),
+    entrySuggestion: buildEntrySuggestion(pair, active, direction, sr, {
+      rr,
+      note: trigger ? `Trigger fired: ${trigger}` : 'At the AOI',
+      confidence: 'high'
+    }),
     reason
   };
 }

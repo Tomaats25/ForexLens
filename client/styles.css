@@ -330,6 +330,96 @@ body {
   color: var(--sell);
 }
 
+/* ── Suggested-entry RR box ──────────────────────────── */
+.entry-suggestion {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid rgba(79, 142, 247, 0.35);
+  background: rgba(79, 142, 247, 0.06);
+  border-radius: 12px;
+}
+
+.suggestion-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.suggestion-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.suggestion-zone {
+  margin-top: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.suggestion-levels {
+  margin-top: 10px;
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-sec);
+  font-variant-numeric: tabular-nums;
+}
+
+.suggestion-levels strong {
+  color: var(--text);
+}
+
+.suggestion-levels .sl-text {
+  color: var(--sell);
+}
+
+.suggestion-levels .tp-text {
+  color: var(--buy);
+}
+
+.suggestion-note {
+  margin-top: 10px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--text-sec);
+}
+
+/* Risk-vs-reward proportional bar */
+.rr-bar {
+  display: flex;
+  height: 22px;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.rr-risk {
+  background: rgba(239, 68, 68, 0.22);
+  color: var(--sell);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+}
+
+.rr-reward {
+  background: rgba(34, 197, 94, 0.2);
+  color: var(--buy);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+}
+
 /* ── Scan progress ───────────────────────────────────── */
 .scan-progress {
   margin-top: 16px;

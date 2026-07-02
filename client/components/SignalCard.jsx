@@ -24,6 +24,22 @@ function pipSize(pair) {
   return pair.includes('JPY') ? 0.01 : 0.0001;
 }
 
+// Visual risk-vs-reward bar: red segment (risk) and green segment (reward),
+// widths proportional to their pip distances.
+function RRBar({ riskPips, rewardPips }) {
+  if (!riskPips || !rewardPips) return null;
+  return (
+    <div className="rr-bar" title={`Risk ${riskPips}p vs reward ${rewardPips}p`}>
+      <div className="rr-risk" style={{ flexGrow: riskPips }}>
+        −{riskPips}p
+      </div>
+      <div className="rr-reward" style={{ flexGrow: rewardPips }}>
+        +{rewardPips}p
+      </div>
+    </div>
+  );
+}
+
 function formatPrice(price, pair) {
   const decimals = pair.includes('JPY') ? 3 : 5;
   return Number(price.toFixed(decimals));
@@ -114,6 +130,11 @@ export default function SignalCard({
 
   const showTradeGrid = signal.actionable && !isNoTrade;
 
+  // Best-entry suggestion box (the "RR box") — shown on cards that don't already
+  // display a full trade grid. Hidden when the checklist verdict is NO TRADE.
+  const suggestion = signal.entrySuggestion;
+  const showSuggestion = !!(suggestion && suggestion.direction && !showTradeGrid && !isNoTrade);
+
   const zone = signal.zone;
   const aoiLine = zone ? (
     <div className="card-aoi">
@@ -168,6 +189,37 @@ export default function SignalCard({
 
       {aoiLine}
 
+      {showSuggestion && (
+        <div className="entry-suggestion">
+          <div className="suggestion-head">
+            <span className="suggestion-title">Suggested Entry</span>
+            <span
+              className={`pill-direction ${suggestion.direction === 'BUY' ? 'buy' : 'sell'}`}
+            >
+              {suggestion.direction}
+            </span>
+          </div>
+          <div className="suggestion-zone">
+            Best entry {suggestion.entryZone.from} – {suggestion.entryZone.to}
+            <span className="info-aux"> · limit at {suggestion.entry}</span>
+          </div>
+          <RRBar riskPips={suggestion.riskPips} rewardPips={suggestion.rewardPips} />
+          <div className="suggestion-levels">
+            <span>
+              SL <strong className="sl-text">{suggestion.sl}</strong>
+            </span>
+            <span>
+              TP <strong className="tp-text">{suggestion.tp}</strong>
+            </span>
+            <span>
+              RR <strong>1:{suggestion.tpCapped ? suggestion.actualRR : suggestion.rr}</strong>
+              {suggestion.tpCapped ? ' · TP capped' : ''}
+            </span>
+          </div>
+          {suggestion.note && <div className="suggestion-note">{suggestion.note}</div>}
+        </div>
+      )}
+
       {showTradeGrid && (
         <>
           {/* Second row: direction pill + trigger */}
@@ -199,10 +251,18 @@ export default function SignalCard({
             <div className="metric">
               <div className="metric-label">R : R</div>
               <div className="metric-value">
-                {isScored ? `1:${tier.rr}` : <span className="metric-muted">—</span>}
+                {isScored ? (
+                  `1:${tier.rr}`
+                ) : weekMode && signal.rr ? (
+                  `1:${signal.rr}`
+                ) : (
+                  <span className="metric-muted">—</span>
+                )}
               </div>
             </div>
           </div>
+
+          <RRBar riskPips={signal.slPips} rewardPips={displayTpPips} />
 
           {mtfRow}
 
