@@ -95,6 +95,43 @@ function SkeletonCard() {
   );
 }
 
+// Animated chart line for empty states — draws itself, then the tip pulses.
+function ChartMotif() {
+  return (
+    <svg
+      className="welcome-chart"
+      width="220"
+      height="84"
+      viewBox="0 0 220 84"
+      fill="none"
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient
+          id="fx-chart-grad"
+          x1="0"
+          y1="0"
+          x2="220"
+          y2="0"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop stopColor="#4F8EF7" />
+          <stop offset="1" stopColor="#22C55E" />
+        </linearGradient>
+      </defs>
+      <path
+        className="chart-line"
+        d="M2 68 L32 56 L56 63 L86 38 L112 47 L142 22 L166 33 L196 12 L216 18"
+        stroke="url(#fx-chart-grad)"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle className="chart-dot" cx="216" cy="18" r="4" fill="#22C55E" />
+    </svg>
+  );
+}
+
 export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists = {}, onScanMeta }) {
   const [loading, setLoading] = useState(false); // heavy scan running
   const [progress, setProgress] = useState(null);
@@ -113,7 +150,16 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
       const data = await r.json();
       setWeekData(data);
       if (data.exists) {
-        onScanMeta?.({ scannedAt: data.scannedAt, count: data.results.length });
+        onScanMeta?.({
+          scannedAt: data.scannedAt,
+          count: data.results.length,
+          // Feed the header ticker tape: pair, last price, trend direction
+          ticker: data.results.map((r) => ({
+            pair: r.pair,
+            price: r.currentPrice,
+            trend: r.trend
+          }))
+        });
       }
     } catch {
       setError('Could not load this week’s scan.');
@@ -341,12 +387,7 @@ export default function Scanner({ onOpenChart, onOpenChecklist, savedChecklists 
 
       {!loading && weekData && !weekData.exists && (
         <div className="empty-state">
-          <div className="empty-icon" aria-hidden="true">
-            <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 3v18h18" />
-              <path d="M7 14l4-4 3 3 5-6" />
-            </svg>
-          </div>
+          <ChartMotif />
           <p className="empty-title">No scan yet for {weekData.week}</p>
           <p className="empty-sub">
             Run the full scan from your PC at the end of the week. Once it's saved, this page

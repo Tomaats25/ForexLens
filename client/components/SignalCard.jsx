@@ -196,7 +196,7 @@ export default function SignalCard({
             <span
               className={`pill-direction ${suggestion.direction === 'BUY' ? 'buy' : 'sell'}`}
             >
-              {suggestion.direction}
+              {suggestion.direction === 'BUY' ? '▲' : '▼'} {suggestion.direction}
             </span>
           </div>
           <div className="suggestion-zone">
@@ -225,7 +225,7 @@ export default function SignalCard({
           {/* Second row: direction pill + trigger */}
           <div className="card-signal-row">
             <span className={`pill-direction ${signal.direction === 'BUY' ? 'buy' : 'sell'}`}>
-              {signal.direction}
+              {signal.direction === 'BUY' ? '▲' : '▼'} {signal.direction}
             </span>
             <span className="trigger-text">{signal.trigger || 'No trigger yet'}</span>
           </div>
